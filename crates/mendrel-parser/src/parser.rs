@@ -175,7 +175,7 @@ impl Parser<'_> {
 
     fn parse_additive_expression(&mut self) -> SyntaxNode {
         let mut children = vec![SyntaxElement::Node(self.parse_multiplicative_expression())];
-        while self.at_text("+") {
+        while self.at_text("+") || self.at_text("-") {
             self.bump_expected(&mut children);
             children.push(SyntaxElement::Node(self.parse_multiplicative_expression()));
         }
@@ -192,10 +192,14 @@ impl Parser<'_> {
     }
 
     fn parse_unary_expression(&mut self) -> SyntaxNode {
-        SyntaxNode::new(
-            SyntaxKind::UnaryExpression,
-            vec![SyntaxElement::Node(self.parse_postfix_expression())],
-        )
+        let mut children = Vec::new();
+        if self.at_text("-") {
+            children.push(SyntaxElement::Node(self.reject_current_token(
+                "unary operators are outside the implemented Phase 1 subset",
+            )));
+        }
+        children.push(SyntaxElement::Node(self.parse_postfix_expression()));
+        SyntaxNode::new(SyntaxKind::UnaryExpression, children)
     }
 
     fn parse_postfix_expression(&mut self) -> SyntaxNode {

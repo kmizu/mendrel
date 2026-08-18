@@ -146,6 +146,118 @@ fn parses_multiplicative_operators_more_tightly_than_addition() {
 }
 
 #[test]
+fn parses_addition_and_subtraction_in_source_order() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn calculate(left: I32, right: I32, value: I32) -> I32 { ",
+        "left - right * value + left - right }\n",
+    );
+    let result = parse(&source("additive.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    let additive =
+        find_kind(result.tree.root(), SyntaxKind::AdditiveExpression).expect("additive expression");
+    let operands = additive
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            SyntaxElement::Node(node) if node.kind == SyntaxKind::MultiplicativeExpression => {
+                Some(node)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(operands.len(), 4);
+    assert_eq!(
+        additive
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                SyntaxElement::Token(token) if token.kind == TokenKind::Punctuation => {
+                    Some(token.text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["-", "+", "-"],
+    );
+    assert_eq!(
+        operands[1]
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                SyntaxElement::Token(token) if token.kind == TokenKind::Punctuation => {
+                    Some(token.text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["*"],
+    );
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn retains_unsupported_unary_minus_after_a_binary_operator() {
+    for (name, expression) in [
+        ("subtraction", "left - -right"),
+        ("addition", "left + -right"),
+    ] {
+        let text = format!(
+            "module demo.main;\npub fn calculate(left: I32, right: I32) -> I32 {{ {expression} }}\n"
+        );
+        let result = parse(&source(&format!("{name}-unary-minus.mnd"), &text));
+
+        assert_eq!(result.tree.source_text(), text);
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{name}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some("-"));
+        let additive = find_kind(result.tree.root(), SyntaxKind::AdditiveExpression)
+            .expect("additive expression");
+        let operands = additive
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                SyntaxElement::Node(node) if node.kind == SyntaxKind::MultiplicativeExpression => {
+                    Some(node)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(operands.len(), 2);
+        assert!(contains_kind(operands[1], SyntaxKind::Error));
+        assert!(!contains_zero_width_token(operands[1], TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn inserts_a_missing_subtraction_operand_without_consuming_the_block_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn broken(value: I32) -> I32 { value - }\n",
+        "pub fn intact(value: I32) -> I32 { value }\n",
+    );
+    let result = parse(&source("missing-subtraction-operand.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("expression"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    let additive = find_kind(result.tree.root(), SyntaxKind::AdditiveExpression)
+        .expect("broken additive expression");
+    assert!(contains_zero_width_token(additive, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn inserts_a_missing_multiplicative_operand_without_consuming_the_block_boundary() {
     let text = concat!(
         "module demo.main;\n",
@@ -452,10 +564,6 @@ fn rejects_syntax_beyond_the_implemented_expression_subset() {
         (
             "unary-expression",
             "pub fn value(input: I32) -> I32 { -input }",
-        ),
-        (
-            "subtraction",
-            "pub fn value(input: I32) -> I32 { input - input }",
         ),
     ] {
         let text = format!("module demo.main;\n{declaration}\n");

@@ -169,6 +169,37 @@ fn formats_multiplicative_precedence_without_changing_structure() {
 }
 
 #[test]
+fn formats_addition_and_subtraction_without_changing_structure() {
+    let input = concat!(
+        "module demo.main;",
+        "pub fn calculate(left:I32,right:I32,value:I32)->I32{",
+        "left-right+value-left",
+        "}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub fn calculate(left: I32, right: I32, value: I32) -> I32 {\n",
+        "    left - right + value - left\n",
+        "}\n",
+    );
+    let parsed = parse_text("additive-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid additive expression");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("additive-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn preserves_comment_text_and_relative_order() {
     let input = "// file\nmodule demo.main;\n/* add */\npub fn add(left:I32,right:I32)->I32{/* sum */\nleft+right}";
     let parsed = parse_text("comments.mnd", input);
