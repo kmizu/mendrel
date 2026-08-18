@@ -1,0 +1,140 @@
+module shop.checkout;
+
+import shop.domain.{Authorization, CheckoutReceipt, CheckoutRequest, Order};
+import shop.domain.{OrderId, PaymentError, RepoError};
+import std.result.Result;
+import std.time.Clock;
+
+pub capability OrdersRepo {
+    async fn find(order_id: OrderId) -> Result<Option<Order>, RepoError>;
+    async fn save(order: Order) -> Result<Unit, RepoError>;
+}
+
+pub capability PaymentGateway {
+    async fn authorize(
+        request: CheckoutRequest,
+    ) -> Result<Authorization, PaymentError>;
+}
+
+pub capability IdempotencyStore {
+    async fn load(
+        key: IdempotencyKey,
+    ) -> Result<Option<CheckoutReceipt>, RepoError>;
+
+    async fn claim(
+        key: IdempotencyKey,
+    ) -> Result<IdempotencyLease, RepoError>;
+}
+
+pub resource IdempotencyLease {
+    @cleanup
+    async fn release(move self) -> Result<Unit, RepoError>;
+
+    async fn complete(
+        move self,
+        receipt: CheckoutReceipt,
+    ) -> Result<Unit, RepoError>;
+}
+
+pub newtype IdempotencyKey = Text
+invariant value.scalar_count() >= 16;
+
+pub enum CheckoutError {
+    @error(code: "CHECKOUT_ORDER_NOT_FOUND", retry: false)
+    OrderNotFound {
+        order_id: OrderId,
+    },
+
+    @error(code: "CHECKOUT_CONFLICT", retry: true)
+    ConcurrentRequest,
+
+    @error(code: "CHECKOUT_PAYMENT", retry: false)
+    Payment {
+        cause: PaymentError,
+    },
+
+    @error(code: "CHECKOUT_STORAGE", retry: true)
+    Storage {
+        cause: RepoError,
+    },
+
+    @error(code: "CHECKOUT_DEADLINE", retry: true)
+    DeadlineExceeded,
+}
+
+pub async fn checkout(
+    request: CheckoutRequest,
+    idempotency_key: IdempotencyKey,
+) -> Result<CheckoutReceipt, CheckoutError>
+uses {
+    orders: OrdersRepo,
+    payments: PaymentGateway,
+    idempotency: IdempotencyStore,
+    clock: Clock,
+}
+contract {
+    requires request.total.amount > 0;
+}
+{
+    let cached = idempotency
+        .load(idempotency_key)
+        .await
+        .map_error(CheckoutError.from_storage)?;
+
+    match cached {
+        Some(receipt) => {
+            return Ok(receipt);
+        },
+        None => Unit,
+    };
+
+    use lease = idempotency
+        .claim(idempotency_key)
+        .await
+        .map_error(CheckoutError.from_storage)?;
+
+    let maybe_order = orders
+        .find(request.order_id)
+        .await
+        .map_error(CheckoutError.from_storage)?;
+
+    let order = match maybe_order {
+        Some(value) => value,
+        None => {
+            return Err(CheckoutError.OrderNotFound {
+                order_id: request.order_id,
+            });
+        },
+    };
+
+    let authorization = within 2.seconds {
+        payments
+            .authorize(request)
+            .await
+            .map_error(CheckoutError.from_payment)
+    }?;
+
+    let receipt = CheckoutReceipt.create(order, authorization, clock.now());
+
+    orders
+        .save(order.mark_paid(receipt.authorization_id))
+        .await
+        .map_error(CheckoutError.from_storage)?;
+
+    lease
+        .complete(receipt)
+        .await
+        .map_error(CheckoutError.from_storage)?;
+
+    Ok(receipt)
+}
+
+impl CheckoutError {
+    fn from_payment(error: PaymentError) -> CheckoutError {
+        CheckoutError.Payment { cause: error }
+    }
+
+    fn from_storage(error: RepoError) -> CheckoutError {
+        CheckoutError.Storage { cause: error }
+    }
+}

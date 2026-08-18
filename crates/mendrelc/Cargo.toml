@@ -1,0 +1,16 @@
+[package]
+name = "mendrelc"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+mendrel-diagnostics = { path = "../mendrel-diagnostics" }
+mendrel-format = { path = "../mendrel-format" }
+mendrel-parser = { path = "../mendrel-parser" }
+mendrel-source = { path = "../mendrel-source" }
+mendrel-syntax = { path = "../mendrel-syntax" }
+
+[lints]
+workspace = true

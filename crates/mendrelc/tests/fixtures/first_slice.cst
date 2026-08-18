@@ -1,0 +1,78 @@
+source_file
+  module_decl
+    Keyword@0..6 "module"
+    qualified_name
+      identifier
+        Whitespace@6..7 " "
+        Identifier@7..11 "demo"
+      Punctuation@11..12 "."
+      identifier
+        Identifier@12..16 "main"
+    Punctuation@16..17 ";"
+  function_decl
+    function_head
+      Whitespace@17..19 "\n\n"
+      Keyword@19..22 "pub"
+      Whitespace@22..23 " "
+      Keyword@23..25 "fn"
+      identifier
+        Whitespace@25..26 " "
+        Identifier@26..29 "add"
+      Punctuation@29..30 "("
+      parameter
+        identifier
+          Identifier@30..34 "left"
+        Punctuation@34..35 ":"
+        type
+          qualified_name
+            identifier
+              Whitespace@35..36 " "
+              Identifier@36..39 "I32"
+      Punctuation@39..40 ","
+      parameter
+        identifier
+          Whitespace@40..41 " "
+          Identifier@41..46 "right"
+        Punctuation@46..47 ":"
+        type
+          qualified_name
+            identifier
+              Whitespace@47..48 " "
+              Identifier@48..51 "I32"
+      Punctuation@51..52 ")"
+      Whitespace@52..53 " "
+      Punctuation@53..55 "->"
+      type
+        qualified_name
+          identifier
+            Whitespace@55..56 " "
+            Identifier@56..59 "I32"
+    block
+      Whitespace@59..60 " "
+      Punctuation@60..61 "{"
+      expression
+        additive_expression
+          multiplicative_expression
+            unary_expression
+              postfix_expression
+                primary_expression
+                  path_expression
+                    qualified_name
+                      identifier
+                        Whitespace@61..66 "\n    "
+                        Identifier@66..70 "left"
+          Whitespace@70..71 " "
+          Punctuation@71..72 "+"
+          multiplicative_expression
+            unary_expression
+              postfix_expression
+                primary_expression
+                  path_expression
+                    qualified_name
+                      identifier
+                        Whitespace@72..73 " "
+                        Identifier@73..78 "right"
+      Whitespace@78..79 "\n"
+      Punctuation@79..80 "}"
+  Whitespace@80..81 "\n"
+  Eof@81..81 ""

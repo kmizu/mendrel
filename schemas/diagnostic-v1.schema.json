@@ -1,0 +1,450 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mendrel.dev/schema/diagnostic-v1.schema.json",
+  "title": "Mendrel Diagnostic v1",
+  "description": "Machine-readable compiler, linter, build, and MAP diagnostic.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "diagnostic_id",
+    "code",
+    "severity",
+    "summary",
+    "workspace_revision",
+    "primary_span",
+    "cause_graph",
+    "fixes",
+    "origin"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "mendrel.diagnostic/1"
+    },
+    "diagnostic_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique only within the producing run."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^(E|W|I|ICE)-[A-Z][A-Z0-9-]*-[0-9]{4}$"
+    },
+    "severity": {
+      "enum": [
+        "error",
+        "warning",
+        "information",
+        "internal-error"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "workspace_revision": {
+      "$ref": "#/$defs/digest"
+    },
+    "primary_span": {
+      "$ref": "#/$defs/span"
+    },
+    "related_spans": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relatedSpan"
+      },
+      "default": []
+    },
+    "symbols": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "expected": {
+      "$ref": "#/$defs/structuredValue"
+    },
+    "actual": {
+      "$ref": "#/$defs/structuredValue"
+    },
+    "cause_graph": {
+      "$ref": "#/$defs/causeGraph"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "fixes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fix"
+      }
+    },
+    "documentation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "id"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "uri": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "suppression": {
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "scope": {
+          "enum": [
+            "none",
+            "line",
+            "declaration",
+            "module",
+            "package"
+          ]
+        },
+        "reason_required": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "component",
+        "phase"
+      ],
+      "properties": {
+        "component": {
+          "enum": [
+            "compiler",
+            "formatter",
+            "linter",
+            "build",
+            "runtime",
+            "map"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9_-]+$"
+    },
+    "position": {
+      "type": "object",
+      "required": [
+        "byte",
+        "line",
+        "column_utf16"
+      ],
+      "properties": {
+        "byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "column_utf16": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "span": {
+      "type": "object",
+      "required": [
+        "file",
+        "start",
+        "end"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        },
+        "source_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "relatedSpan": {
+      "type": "object",
+      "required": [
+        "file",
+        "start",
+        "end",
+        "label"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start": {
+          "$ref": "#/$defs/position"
+        },
+        "end": {
+          "$ref": "#/$defs/position"
+        },
+        "source_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "structuredValue": {
+      "type": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+    "causeNode": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "summary"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "source-expression",
+            "declaration",
+            "call",
+            "type-constraint",
+            "effect-requirement",
+            "capability-availability",
+            "resource-transition",
+            "task-capture",
+            "contract",
+            "wire-rule",
+            "package-dependency",
+            "build-input",
+            "security-policy"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "span": {
+          "$ref": "#/$defs/span"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/structuredValue"
+        }
+      },
+      "additionalProperties": true
+    },
+    "causeEdge": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "requires",
+            "inferred-from",
+            "conflicts-with",
+            "introduced-by",
+            "captured-at",
+            "crosses-boundary",
+            "converted-by",
+            "depends-on",
+            "fixed-by"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "causeGraph": {
+      "type": "object",
+      "required": [
+        "roots",
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/causeNode"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/causeEdge"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "textEdit": {
+      "type": "object",
+      "required": [
+        "span",
+        "replacement"
+      ],
+      "properties": {
+        "span": {
+          "$ref": "#/$defs/span"
+        },
+        "replacement": {
+          "type": "string"
+        },
+        "expected_source_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "semanticOperation": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "fix": {
+      "type": "object",
+      "required": [
+        "fix_id",
+        "title",
+        "applicability"
+      ],
+      "properties": {
+        "fix_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicability": {
+          "enum": [
+            "machine-applicable",
+            "machine-applicable-with-format",
+            "requires-review",
+            "has-choice",
+            "informational",
+            "unsafe"
+          ]
+        },
+        "text_edits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/textEdit"
+          }
+        },
+        "semantic_operation": {
+          "$ref": "#/$defs/semanticOperation"
+        },
+        "preview_required": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "text_edits"
+          ]
+        },
+        {
+          "required": [
+            "semantic_operation"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    }
+  }
+}

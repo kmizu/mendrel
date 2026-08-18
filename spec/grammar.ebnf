@@ -1,0 +1,388 @@
+(*
+   Mendrel source grammar skeleton, design draft 0.2.
+
+   This file is normative for the concrete shape of the Phase 1 parser, but it
+   deliberately leaves Unicode identifier classes, escape validation, numeric
+   range validation, indentation, and attribute argument semantics to the
+   lexical and semantic specifications. The canonical formatter removes
+   insignificant alternatives after parsing.
+
+   Notation:
+     { X }   zero or more
+     [ X ]   optional
+     X | Y   alternative
+     "x"     literal token
+*)
+
+source_file        = module_decl, { import_decl }, { top_level_decl }, EOF ;
+
+module_decl        = "module", qualified_name, ";" ;
+import_decl        = "import", import_path, [ "as", identifier ], ";" ;
+import_path        = qualified_name, [ ".", "{", import_item,
+                     { ",", import_item }, [ "," ], "}" ] ;
+import_item        = identifier, [ "as", identifier ] ;
+
+qualified_name     = identifier, { ".", identifier } ;
+visibility         = "pub" | "internal" ;
+attribute          = "@", identifier,
+                     [ "(", [ attribute_arg, { ",", attribute_arg }, [ "," ] ], ")" ] ;
+attribute_arg      = [ identifier, ":" ], attribute_value ;
+attribute_value    = literal
+                   | qualified_name
+                   | qualified_name, "(",
+                     [ attribute_arg, { ",", attribute_arg }, [ "," ] ], ")"
+                   | "[", [ attribute_value, { ",", attribute_value }, [ "," ] ], "]" ;
+attributes         = { attribute } ;
+
+
+top_level_decl     = attributes,
+                     ( record_decl
+                     | enum_decl
+                     | wire_record_decl
+                     | wire_enum_decl
+                     | newtype_decl
+                     | opaque_type_decl
+                     | type_alias_decl
+                     | trait_decl
+                     | impl_decl
+                     | capability_decl
+                     | resource_decl
+                     | object_decl
+                     | function_decl
+                     | service_decl
+                     | test_decl
+                     | unsafe_module_decl
+                     ) ;
+
+record_decl        = [ visibility ], "record", identifier,
+                     [ generic_params ], [ where_clause ], record_body ;
+record_body        = "{", { record_field }, "}" ;
+record_field       = attributes, [ visibility ], identifier, ":", type, "," ;
+
+enum_decl          = [ visibility ], "enum", identifier,
+                     [ generic_params ], [ where_clause ], enum_body ;
+enum_body          = "{", { enum_variant }, "}" ;
+enum_variant       = attributes, identifier,
+                     [ "{", { record_field }, "}" ], "," ;
+
+wire_record_decl   = [ visibility ], "wire", "record", identifier,
+                     "{", { wire_record_item }, "}" ;
+wire_record_item   = attributes, "field", integer_literal, identifier,
+                     ":", type, ","
+                   | "reserve", wire_reservation, "," ;
+wire_reservation   = integer_literal | string_literal ;
+
+wire_enum_decl     = [ visibility ], "wire", "enum", identifier,
+                     "{", { wire_enum_item }, "}" ;
+wire_enum_item     = attributes, "case", integer_literal, identifier, ","
+                   | "unknown", identifier, "{", { record_field }, "}", ","
+                   | "reserve", wire_reservation, "," ;
+
+newtype_decl       = [ visibility ], "newtype", identifier,
+                     [ generic_params ], "=", type,
+                     [ "invariant", expression ], ";" ;
+opaque_type_decl   = [ visibility ], "opaque", "type", identifier,
+                     [ generic_params ], ";" ;
+type_alias_decl    = [ visibility ], "type", identifier,
+                     [ generic_params ], "=", type, ";" ;
+
+trait_decl         = [ visibility ], "trait", identifier,
+                     [ generic_params ], [ where_clause ],
+                     "{", { trait_item }, "}" ;
+trait_item         = attributes,
+                     ( associated_type_decl | function_signature | function_decl ) ;
+associated_type_decl = "type", identifier, [ ":", trait_bounds ],
+                       [ "=", type ], ";" ;
+
+impl_decl          = "impl", [ generic_params ], type_path,
+                     [ "for", type ], [ where_clause ],
+                     "{", { impl_item }, "}" ;
+impl_item          = attributes,
+                     ( associated_type_impl | function_decl ) ;
+associated_type_impl = "type", identifier, "=", type, ";" ;
+
+capability_decl    = [ visibility ], "capability", identifier,
+                     [ generic_params ], [ where_clause ],
+                     "{", { capability_item }, "}" ;
+capability_item    = attributes, function_signature ;
+
+resource_decl      = [ visibility ], "resource", identifier,
+                     [ generic_params ], [ where_clause ],
+                     "{", { resource_item }, "}" ;
+resource_item      = attributes, ( function_signature | function_decl ) ;
+
+object_decl        = [ visibility ], "object", identifier,
+                     [ generic_params ], [ where_clause ],
+                     "{", { object_item }, "}" ;
+object_item        = attributes,
+                     ( object_field | function_decl ) ;
+object_field       = [ visibility ], "var", identifier, ":", type, ";" ;
+
+
+function_decl      = function_head, [ contract_clause ], block ;
+function_signature = function_head, [ contract_clause ], ";" ;
+function_head      = [ visibility ], [ "async" ], [ "unsafe" ],
+                     "fn", identifier, [ generic_params ],
+                     "(", [ parameter, { ",", parameter }, [ "," ] ], ")",
+                     [ "->", type ], [ uses_clause ], [ where_clause ] ;
+parameter          = [ "move" ], identifier, ":", type
+                   | "self"
+                   | "move", "self"
+                   | "self", ":", reference_type ;
+
+uses_clause        = "uses", effect_row ;
+effect_row         = "{", [ effect_entry, { ",", effect_entry }, [ "," ] ], "}"
+                   | identifier ;
+effect_entry       = identifier, ":", type ;
+
+where_clause       = "where", "{", where_predicate,
+                     { ",", where_predicate }, [ "," ], "}" ;
+where_predicate    = type, ":", trait_bounds
+                   | identifier, ":", "EffectRow"
+                   | identifier, "subset", identifier
+                   | identifier, "lacks", identifier ;
+trait_bounds       = type_path, { "+", type_path } ;
+
+contract_clause    = "contract", "{", { contract_item }, "}" ;
+contract_item      = "requires", expression, ";"
+                   | "ensures", expression, ";"
+                   | "invariant", expression, ";" ;
+
+service_decl       = [ visibility ], "service", identifier,
+                     [ uses_clause ], "{", { function_decl }, "}" ;
+
+test_decl          = [ "property" ], "test", identifier,
+                     [ "(", [ parameter, { ",", parameter }, [ "," ] ], ")" ],
+                     [ uses_clause ], block ;
+
+unsafe_module_decl = "unsafe", "module", qualified_name,
+                     "reason", string_literal,
+                     "{", { unsafe_module_item }, "}" ;
+unsafe_module_item = attributes,
+                     ( record_decl
+                     | enum_decl
+                     | newtype_decl
+                     | opaque_type_decl
+                     | type_alias_decl
+                     | trait_decl
+                     | impl_decl
+                     | resource_decl
+                     | object_decl
+                     | function_decl
+                     ) ;
+
+(* Statements and blocks *)
+
+block              = "{", { statement }, [ expression ], "}" ;
+statement          = let_statement
+                   | var_statement
+                   | use_statement
+                   | assignment_statement
+                   | expression_statement
+                   | return_statement
+                   | break_statement
+                   | continue_statement
+                   | while_statement
+                   | for_statement
+                   ;
+let_statement      = "let", pattern, [ ":", type ], "=", expression, ";" ;
+var_statement      = "var", identifier, [ ":", type ], "=", expression, ";" ;
+use_statement      = "use", pattern, [ ":", type ], "=", expression, ";" ;
+assignment_statement = place_expression, assignment_operator, expression, ";" ;
+assignment_operator = "=" | "+=" | "-=" | "*=" | "/=" | "%=" ;
+expression_statement = expression, ";" ;
+return_statement   = "return", [ expression ], ";" ;
+break_statement    = "break", [ expression ], ";" ;
+continue_statement = "continue", ";" ;
+while_statement    = "while", expression, block ;
+for_statement      = "for", pattern, "in", expression, block ;
+
+(* Expressions: precedence increases down the grammar. *)
+
+expression         = if_expression
+                   | match_expression
+                   | loop_expression
+                   | scope_expression
+                   | within_expression
+                   | select_expression
+                   | closure_expression
+                   | logical_or_expression ;
+
+if_expression      = "if", expression, block, [ "else", ( block | if_expression ) ] ;
+match_expression   = "match", expression, "{", { match_arm }, "}" ;
+match_arm          = pattern, [ "if", pure_guard ], "=>", expression, "," ;
+pure_guard         = logical_or_expression ;
+loop_expression    = "loop", block ;
+
+scope_expression   = "scope", identifier, block ;
+within_expression  = "within", expression, block ;
+select_expression  = "select", "{", { select_arm }, "}" ;
+select_arm         = pattern, "=", expression, "=>", expression, "," ;
+closure_expression = [ "async" ], [ "move" ], "|",
+                     [ closure_parameter, { ",", closure_parameter } ], "|",
+                     [ "->", type ], expression ;
+closure_parameter  = identifier, [ ":", type ] ;
+
+logical_or_expression  = logical_and_expression,
+                         { "||", logical_and_expression } ;
+logical_and_expression = bit_or_expression,
+                         { "&&", bit_or_expression } ;
+bit_or_expression      = bit_xor_expression, { "|", bit_xor_expression } ;
+bit_xor_expression     = bit_and_expression, { "^", bit_and_expression } ;
+bit_and_expression     = equality_expression, { "&", equality_expression } ;
+equality_expression    = comparison_expression,
+                         [ ( "==" | "!=" ), comparison_expression ] ;
+comparison_expression  = shift_expression,
+                         [ ( "<" | "<=" | ">" | ">=" ), shift_expression ] ;
+shift_expression       = additive_expression,
+                         { ( "<<" | ">>" ), additive_expression } ;
+additive_expression    = multiplicative_expression,
+                         { ( "+" | "-" ), multiplicative_expression } ;
+multiplicative_expression = unary_expression,
+                            { ( "*" | "/" | "%" ), unary_expression } ;
+unary_expression       = ( "!" | "-" | "+" ), unary_expression
+                       | postfix_expression ;
+
+postfix_expression = primary_expression, { postfix_suffix } ;
+postfix_suffix     = type_apply_suffix
+                   | call_suffix
+                   | member_suffix
+                   | index_suffix
+                   | await_suffix
+                   | try_suffix
+                   | with_suffix ;
+type_apply_suffix  = "::", type_arguments ;
+call_suffix        = "(", [ argument, { ",", argument }, [ "," ] ], ")" ;
+argument           = [ identifier, ":" ], expression ;
+member_suffix      = ".", identifier ;
+index_suffix       = "[", expression, "]" ;
+await_suffix       = ".", "await" ;
+try_suffix         = "?" ;
+with_suffix        = "with", "{", [ field_initializer,
+                     { ",", field_initializer }, [ "," ] ], "}" ;
+
+primary_expression = literal
+                   | path_expression
+                   | parenthesized_expression
+                   | tuple_expression
+                   | list_expression
+                   | record_expression
+                   | block
+                   | hole_expression
+                   | move_expression
+                   | spawn_expression
+                   | unsafe_expression ;
+path_expression    = qualified_name ;
+parenthesized_expression = "(", expression, ")" ;
+tuple_expression   = "(", expression, ",", [ expression,
+                     { ",", expression }, [ "," ] ], ")" ;
+list_expression    = "[", [ expression, { ",", expression }, [ "," ] ], "]" ;
+record_expression  = type_path, "{", [ field_initializer,
+                     { ",", field_initializer }, [ "," ] ], "}" ;
+field_initializer  = identifier, [ ":", expression ] ;
+hole_expression    = "?", identifier ;
+move_expression    = "move", place_expression ;
+spawn_expression   = identifier, ".", "spawn", [ "move" ],
+                     [ capture_list ], block ;
+capture_list       = identifier, { ",", identifier } ;
+unsafe_expression  = "unsafe", block ;
+place_expression   = path_expression, { member_suffix | index_suffix } ;
+
+(* Patterns *)
+
+pattern            = wildcard_pattern
+                   | literal_pattern
+                   | binding_pattern
+                   | variant_pattern
+                   | record_pattern
+                   | tuple_pattern
+                   | list_pattern ;
+wildcard_pattern   = "_" ;
+literal_pattern    = literal ;
+binding_pattern    = [ "move" ], identifier ;
+variant_pattern    = qualified_name,
+                     [ "{", [ pattern_field, { ",", pattern_field }, [ "," ] ], "}" ] ;
+record_pattern     = type_path, "{", [ pattern_field,
+                     { ",", pattern_field }, [ "," ] ], "}" ;
+pattern_field      = identifier, [ ":", pattern ] ;
+tuple_pattern      = "(", pattern, ",", [ pattern,
+                     { ",", pattern }, [ "," ] ], ")" ;
+list_pattern       = "[", [ pattern, { ",", pattern }, [ "," ] ], "]" ;
+
+(* Types *)
+
+type               = function_type | reference_type | tuple_type | type_path_with_args ;
+function_type      = [ "async" ], "fn", "(", [ type, { ",", type } ], ")",
+                     "->", type, [ "uses", effect_row ] ;
+reference_type     = "&", [ "mut" ], type ;
+tuple_type         = "(", type, ",", [ type, { ",", type }, [ "," ] ], ")" ;
+type_path_with_args = type_path, [ type_arguments ] ;
+type_path          = qualified_name | "Self" | "dyn", qualified_name ;
+type_arguments     = "<", type, { ",", type }, [ "," ], ">" ;
+generic_params     = "<", generic_param, { ",", generic_param }, [ "," ], ">" ;
+generic_param      = identifier, [ ":", trait_bounds ] ;
+
+(* Literals and lexical classes *)
+
+literal            = integer_literal
+                   | float_literal
+                   | decimal_literal
+                   | char_literal
+                   | string_literal
+                   | byte_string_literal
+                   | duration_literal
+                   | "true"
+                   | "false"
+                   | "Unit"
+                   | "None" ;
+
+identifier         = IDENTIFIER ;
+integer_literal    = INTEGER_LITERAL ;
+float_literal      = FLOAT_LITERAL ;
+decimal_literal    = DECIMAL_LITERAL ;
+char_literal       = CHAR_LITERAL ;
+string_literal     = STRING_LITERAL ;
+byte_string_literal = BYTE_STRING_LITERAL ;
+duration_literal  = DURATION_LITERAL ;
+
+
+(*
+   Declarative package manifest root. Mendrel.pkg is data, not executable
+   Mendrel source. It intentionally has no imports, calls, expressions,
+   interpolation, conditionals outside the closed platform predicate grammar,
+   or user-defined extension syntax.
+*)
+
+manifest_file      = package_section,
+                     targets_section,
+                     [ dependencies_section ],
+                     [ capabilities_section ],
+                     [ unsafe_section ],
+                     [ build_section ],
+                     { generator_section | platform_section },
+                     EOF ;
+
+package_section    = "package", manifest_object ;
+targets_section    = "targets", "{", { target_decl }, "}" ;
+target_decl        = ( "library" | "service" | "binary" | "test" ),
+                     string_literal, manifest_object ;
+dependencies_section = "dependencies", manifest_object ;
+capabilities_section = "capabilities", manifest_object ;
+unsafe_section     = "unsafe", manifest_object ;
+build_section      = "build", manifest_object ;
+generator_section  = "generator", string_literal, manifest_object ;
+platform_section   = "platform", "{", { platform_when }, "}" ;
+platform_when      = "when", platform_predicate, manifest_object ;
+platform_predicate = "target", ".", ( "os" | "arch" | "abi" ),
+                     ( "==" | "!=" ), string_literal ;
+
+manifest_object    = "{", { manifest_entry }, "}" ;
+manifest_entry     = manifest_key, ":", manifest_value, [ "," ]
+                   | target_decl
+                   | platform_when ;
+manifest_key       = identifier | string_literal ;
+manifest_value     = literal
+                   | manifest_array
+                   | manifest_object ;
+manifest_array     = "[", [ manifest_value,
+                     { ",", manifest_value }, [ "," ] ], "]" ;

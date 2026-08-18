@@ -1,0 +1,5 @@
+module demo.main
+
+pub fn add(left: I32, right: I32) -> I32 {
+    left + right
+}

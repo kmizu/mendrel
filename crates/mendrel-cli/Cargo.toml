@@ -1,0 +1,16 @@
+[package]
+name = "mendrel-cli"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "mendrel"
+path = "src/main.rs"
+
+[dependencies]
+mendrelc = { path = "../mendrelc" }
+
+[lints]
+workspace = true

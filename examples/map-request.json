@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "id": "syntax-expected-0001",
+  "method": "syntax.expected",
+  "meta": {
+    "protocol_version": "mendrel.map/1",
+    "workspace_revision": "sha256:7f8c",
+    "client": {
+      "name": "codex",
+      "version": "example"
+    }
+  },
+  "params": {
+    "workspace_revision": "sha256:7f8c",
+    "file": "src/shop/checkout.mnd",
+    "byte_offset": 812,
+    "expected_category": "expression"
+  }
+}

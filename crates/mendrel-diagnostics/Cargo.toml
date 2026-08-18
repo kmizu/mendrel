@@ -1,0 +1,12 @@
+[package]
+name = "mendrel-diagnostics"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+mendrel-source = { path = "../mendrel-source" }
+
+[lints]
+workspace = true

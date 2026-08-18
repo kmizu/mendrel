@@ -1,0 +1,24 @@
+[package]
+name = "mendrel-fuzz"
+edition = "2024"
+publish = false
+version = "0.0.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mendrel-format = { path = "../crates/mendrel-format" }
+mendrel-parser = { path = "../crates/mendrel-parser" }
+mendrel-source = { path = "../crates/mendrel-source" }
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

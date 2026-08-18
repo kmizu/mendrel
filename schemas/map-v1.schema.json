@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mendrel.dev/schema/map-v1.schema.json",
+  "title": "Mendrel Agent Protocol v1 Envelope",
+  "description": "JSON-RPC 2.0 envelope and common Mendrel Agent Protocol invariants.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/notification"
+    },
+    {
+      "$ref": "#/$defs/successResponse"
+    },
+    {
+      "$ref": "#/$defs/errorResponse"
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": [
+        "string",
+        "integer"
+      ]
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9_-]+$"
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^(workspace|syntax|symbol|type|effect|resource|concurrency|context|check|lint|test|build|artifact|change|api|schema|unsafe|deployment|x\\.[a-z0-9][a-z0-9_-]*)\\.[a-z][a-z0-9_-]*$"
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "protocol_version"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": "mendrel.map/1"
+        },
+        "workspace_revision": {
+          "$ref": "#/$defs/digest"
+        },
+        "request_revision": {
+          "$ref": "#/$defs/digest"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "client": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "params": {
+      "type": "object",
+      "properties": {
+        "workspace_revision": {
+          "$ref": "#/$defs/digest"
+        },
+        "continuation_cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "meta",
+        "params"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "params": {
+          "$ref": "#/$defs/params"
+        }
+      },
+      "additionalProperties": false
+    },
+    "notification": {
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "meta",
+        "params"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "params": {
+          "$ref": "#/$defs/params"
+        }
+      },
+      "not": {
+        "required": [
+          "id"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "successResponse": {
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "id",
+        "meta",
+        "result"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "result": {},
+        "continuation_cursor": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "errorResponse": {
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "id",
+        "meta",
+        "error"
+      ],
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "error": {
+          "$ref": "#/$defs/error"
+        }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "diagnostic_code": {
+              "type": "string"
+            },
+            "current_workspace_revision": {
+              "$ref": "#/$defs/digest"
+            },
+            "retryable": {
+              "type": "boolean"
+            },
+            "choices": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
