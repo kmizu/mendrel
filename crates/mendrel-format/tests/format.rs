@@ -73,6 +73,40 @@ fn formats_parenthesized_expressions_without_changing_their_structure() {
 }
 
 #[test]
+fn keeps_binary_operator_spacing_before_parenthesized_operands() {
+    let cases = [
+        ("left+(right)", "left + (right)"),
+        ("(left+(right))", "(left + (right))"),
+    ];
+
+    for (index, (expression, expected_expression)) in cases.into_iter().enumerate() {
+        let input =
+            format!("module demo.main;pub fn grouped(left:I32,right:I32)->I32{{{expression}}}");
+        let expected = format!(
+            "module demo.main;\n\npub fn grouped(left: I32, right: I32) -> I32 {{\n    {expected_expression}\n}}\n"
+        );
+        let parsed = parse_text(&format!("operator-grouping-{index}.mnd"), &input);
+        assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+        let before = parsed.tree.structural_fingerprint();
+        let formatted = format(&parsed.tree).expect("valid parenthesized operand");
+        assert_eq!(formatted, expected);
+
+        let reparsed = parse_text(
+            &format!("operator-grouping-formatted-{index}.mnd"),
+            &formatted,
+        );
+        assert!(
+            reparsed.diagnostics.is_empty(),
+            "{:#?}",
+            reparsed.diagnostics
+        );
+        assert_eq!(reparsed.tree.structural_fingerprint(), before);
+        assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+    }
+}
+
+#[test]
 fn preserves_comment_text_and_relative_order() {
     let input = "// file\nmodule demo.main;\n/* add */\npub fn add(left:I32,right:I32)->I32{/* sum */\nleft+right}";
     let parsed = parse_text("comments.mnd", input);
