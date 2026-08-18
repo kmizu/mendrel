@@ -73,6 +73,32 @@ fn formats_parenthesized_expressions_without_changing_their_structure() {
 }
 
 #[test]
+fn formats_literal_expressions_without_changing_structure() {
+    let input = "module demo.main;pub fn literal(value:I32)->I32{choose(1,text:\"value\",true,false,Unit,None)}";
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub fn literal(value: I32) -> I32 {\n",
+        "    choose(1, text: \"value\", true, false, Unit, None)\n",
+        "}\n",
+    );
+    let parsed = parse_text("literal-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid literal expression");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("literal-format-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_binary_operator_spacing_before_parenthesized_operands() {
     let cases = [
         ("left+(right)", "left + (right)"),

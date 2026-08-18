@@ -246,7 +246,9 @@ impl Parser<'_> {
 
     fn parse_primary_expression(&mut self) -> SyntaxNode {
         let mut children = Vec::new();
-        if self.at_identifier() {
+        if self.at_literal() {
+            children.push(SyntaxElement::Node(self.parse_literal()));
+        } else if self.at_identifier() {
             children.push(SyntaxElement::Node(SyntaxNode::new(
                 SyntaxKind::PathExpression,
                 vec![SyntaxElement::Node(SyntaxNode::new(
@@ -260,6 +262,33 @@ impl Parser<'_> {
             self.insert_missing("expression", &mut children);
         }
         SyntaxNode::new(SyntaxKind::PrimaryExpression, children)
+    }
+
+    fn parse_literal(&mut self) -> SyntaxNode {
+        let mut literal_children = Vec::new();
+        let leaf_kind = match self.current_significant() {
+            Some(token) if token.kind == TokenKind::Integer => Some(SyntaxKind::IntegerLiteral),
+            Some(token) if token.kind == TokenKind::String => Some(SyntaxKind::StringLiteral),
+            _ => None,
+        };
+        if let Some(kind) = leaf_kind {
+            let mut leaf_children = Vec::new();
+            if kind == SyntaxKind::StringLiteral
+                && self
+                    .current_significant()
+                    .is_some_and(|token| token.text.contains('\\'))
+            {
+                leaf_children.push(SyntaxElement::Node(self.reject_current_token(
+                    "string escapes are outside the implemented Phase 1 subset",
+                )));
+            } else {
+                self.bump_expected(&mut leaf_children);
+            }
+            literal_children.push(SyntaxElement::Node(SyntaxNode::new(kind, leaf_children)));
+        } else {
+            self.bump_expected(&mut literal_children);
+        }
+        SyntaxNode::new(SyntaxKind::Literal, literal_children)
     }
 
     fn parse_parenthesized_expression(&mut self) -> SyntaxNode {
@@ -408,7 +437,14 @@ impl Parser<'_> {
     }
 
     fn at_expression_start(&self) -> bool {
-        self.at_identifier() || self.at_text("(")
+        self.at_literal() || self.at_identifier() || self.at_text("(")
+    }
+
+    fn at_literal(&self) -> bool {
+        self.current_significant().is_some_and(|token| {
+            matches!(token.kind, TokenKind::Integer | TokenKind::String)
+                || matches!(token.text.as_str(), "true" | "false" | "Unit" | "None")
+        })
     }
 
     fn significant_token_is_followed_by(&self, expected: &str) -> bool {

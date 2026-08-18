@@ -82,6 +82,55 @@ fn parses_nested_parenthesized_expressions_without_losing_source() {
 }
 
 #[test]
+fn parses_specified_literal_primary_expressions() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn integer(value: I32) -> I32 { 1 }\n",
+        "pub fn string(value: I32) -> I32 { \"value\" }\n",
+        "pub fn boolean_true(value: I32) -> I32 { true }\n",
+        "pub fn boolean_false(value: I32) -> I32 { false }\n",
+        "pub fn unit(value: I32) -> I32 { Unit }\n",
+        "pub fn none(value: I32) -> I32 { None }\n",
+    );
+    let result = parse(&source("literals.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Literal), 6);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::IntegerLiteral),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::StringLiteral), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn rejects_string_escapes_until_the_escape_set_is_specified() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn string(value: I32) -> I32 { \"line\\\\n\" }\n",
+    );
+    let result = parse(&source("string-escape.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Literal), 1);
+    let literal = find_kind(result.tree.root(), SyntaxKind::Literal).expect("literal node");
+    assert!(contains_kind(literal, SyntaxKind::Error));
+    assert!(
+        !result
+            .tree
+            .tokens()
+            .iter()
+            .any(|token| token.kind == TokenKind::Missing)
+    );
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("\"line\\\\n\""));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn parses_chained_calls_with_named_arguments_and_a_trailing_comma() {
     let text = concat!(
         "module demo.main;\n",
@@ -610,6 +659,10 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
         ),
         ("argument", "[ identifier, \":\" ], expression"),
         ("parenthesized_expression", "\"(\", expression, \")\""),
+        (
+            "literal",
+            "integer_literal | float_literal | decimal_literal | char_literal | string_literal | byte_string_literal | duration_literal | \"true\" | \"false\" | \"Unit\" | \"None\"",
+        ),
     ] {
         assert_eq!(
             production_rule(production),
