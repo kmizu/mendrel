@@ -10,7 +10,7 @@
 |---|---:|---|---|
 | `AGENTS.md` | 8,504 | `cc13558ccc8061ae56448f3638dfcc624b48b44bd2714a189d547bccf078489c` | coding agent の repository-wide 実装規律 |
 | `PROMPT_FOR_CODEX.md` | 5,264 | `f294f80204f91318a3d67a5f4a10381e5283fc758c7bac9038182d8875fef66a` | Codex bootstrap prompt |
-| `README.md` | 6,164 | `a19b7e1c7f8e6054d05fb208d5083c2430a3d147602709b1165fff2960a831fc` | user-facing overview, intent, status, and quick start |
+| `README.md` | 8,070 | `186c8a6872d93a78228568036086960f505adf462eb1e2324864c7ba28a00e52` | user-facing benefits, target experience, status, and quick start |
 | `VALIDATION.md` | 1,992 | `d91c579b4f28f98548a157a4b6a39dd772f0fbbc5f226df962a31f20674edb8b` | pack 検証結果と deliberate limits |
 | `docs/00-executive-decision.md` | 12,920 | `9ccae8a1a7dddb1d614f93ef3f2a523b90397494dc5d89ee3f6d4ab812ab2d4a` | 目的関数、代替案比較、最終決定 |
 | `docs/01-language-reference.md` | 20,949 | `9c7f3be9e01d11f0417d988af7178267019579269e49ee4ca0ca9369010ac9c6` | 表層言語リファレンス |
