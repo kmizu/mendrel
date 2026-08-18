@@ -26,6 +26,23 @@ fn count_kind(node: &SyntaxNode, expected: SyntaxKind) -> usize {
             .sum::<usize>()
 }
 
+fn find_kind(node: &SyntaxNode, expected: SyntaxKind) -> Option<&SyntaxNode> {
+    if node.kind == expected {
+        return Some(node);
+    }
+    node.children.iter().find_map(|child| match child {
+        SyntaxElement::Node(child) => find_kind(child, expected),
+        SyntaxElement::Token(_) => None,
+    })
+}
+
+fn contains_zero_width_token(node: &SyntaxNode, expected: TokenKind) -> bool {
+    node.children.iter().any(|child| match child {
+        SyntaxElement::Node(child) => contains_zero_width_token(child, expected),
+        SyntaxElement::Token(token) => token.kind == expected && token.span.is_empty(),
+    })
+}
+
 #[test]
 fn parses_the_first_slice_into_a_lossless_cst() {
     let text = include_str!("fixtures/first_slice.mnd");
@@ -78,6 +95,77 @@ fn parses_chained_calls_with_named_arguments_and_a_trailing_comma() {
     assert_eq!(count_kind(result.tree.root(), SyntaxKind::PostfixSuffix), 2);
     assert_eq!(count_kind(result.tree.root(), SyntaxKind::Argument), 2);
     assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn parses_multiplicative_operators_more_tightly_than_addition() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn calculate(left: I32, right: I32, value: I32) -> I32 { ",
+        "left + right * value / left % right }\n",
+    );
+    let result = parse(&source("multiplicative.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    let additive =
+        find_kind(result.tree.root(), SyntaxKind::AdditiveExpression).expect("additive expression");
+    let multiplicative = additive
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            SyntaxElement::Node(node) if node.kind == SyntaxKind::MultiplicativeExpression => {
+                Some(node)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(multiplicative.len(), 2);
+    assert_eq!(
+        multiplicative[1]
+            .children
+            .iter()
+            .filter(|child| matches!(child, SyntaxElement::Node(node) if node.kind == SyntaxKind::UnaryExpression))
+            .count(),
+        4,
+    );
+    assert_eq!(
+        multiplicative[1]
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                SyntaxElement::Token(token) if token.kind == TokenKind::Punctuation => {
+                    Some(token.text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["*", "/", "%"],
+    );
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_multiplicative_operand_without_consuming_the_block_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn broken(value: I32) -> I32 { value * }\n",
+        "pub fn intact(value: I32) -> I32 { value }\n",
+    );
+    let result = parse(&source("missing-multiplicative-operand.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("expression"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    let multiplicative = find_kind(result.tree.root(), SyntaxKind::MultiplicativeExpression)
+        .expect("broken multiplicative expression");
+    assert!(contains_zero_width_token(
+        multiplicative,
+        TokenKind::Missing,
+    ));
+    assert!(result.tree.has_recovery());
 }
 
 #[test]
@@ -349,7 +437,7 @@ fn rejects_move_parameters_without_resource_semantics() {
 }
 
 #[test]
-fn rejects_syntax_beyond_the_addition_only_vertical_slice() {
+fn rejects_syntax_beyond_the_implemented_expression_subset() {
     for (name, declaration) in [
         ("empty-parameters", "pub fn value() -> I32 { value }"),
         (
@@ -368,18 +456,6 @@ fn rejects_syntax_beyond_the_addition_only_vertical_slice() {
         (
             "subtraction",
             "pub fn value(input: I32) -> I32 { input - input }",
-        ),
-        (
-            "multiplication",
-            "pub fn value(input: I32) -> I32 { input * input }",
-        ),
-        (
-            "division",
-            "pub fn value(input: I32) -> I32 { input / input }",
-        ),
-        (
-            "remainder",
-            "pub fn value(input: I32) -> I32 { input % input }",
         ),
     ] {
         let text = format!("module demo.main;\n{declaration}\n");

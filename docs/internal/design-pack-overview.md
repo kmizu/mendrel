@@ -51,9 +51,9 @@ Conflicts must be resolved explicitly through an ADR rather than by silently sel
 
 ## Bootstrap implementation boundary
 
-The current parser subset accepts a module declaration and public function declarations with typed identifier parameters, an explicit return type, and a trailing expression made from identifiers, binary `+`, grouping parentheses, and chained function calls. Calls may have zero or more positional or named arguments and an optional trailing comma.
+The current parser subset accepts a module declaration and public function declarations with typed identifier parameters, an explicit return type, and a trailing expression made from identifiers, binary `+`, the multiplicative operators `*`, `/`, and `%`, grouping parentheses, and chained function calls. Calls may have zero or more positional or named arguments and an optional trailing comma.
 
-Qualified paths, unary operators, other arithmetic operators, empty parameter lists, empty bodies, omitted or `internal` visibility, `async`, `unsafe`, and `move` parameters are outside the current slice. They are rejected with `E-SYNTAX-UNSUPPORTED-0001` rather than accepted with provisional semantics.
+Qualified paths, unary operators, subtraction, empty parameter lists, empty bodies, omitted or `internal` visibility, `async`, `unsafe`, and `move` parameters are outside the current slice. They are rejected with `E-SYNTAX-UNSUPPORTED-0001` rather than accepted with provisional semantics.
 
 The lexer preserves trivia, nested block comments, and invalid tokens. The parser preserves missing tokens and unsupported regions as CST recovery elements. The formatter canonicalizes only recovery-free trees and does not rewrite malformed input.
 

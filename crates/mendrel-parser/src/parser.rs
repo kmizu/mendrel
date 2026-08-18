@@ -78,14 +78,14 @@ impl Parser<'_> {
         self.expect_text("(", &mut children);
         if self.at_text(")") {
             children.push(SyntaxElement::Node(self.reject_empty_region(
-                "the addition-only Phase 1 slice requires at least one typed parameter",
+                "the implemented Phase 1 subset requires at least one typed parameter",
             )));
         } else if !self.at_eof() {
             children.push(SyntaxElement::Node(self.parse_parameter()));
             while self.at_text(",") {
                 if self.significant_token_is_followed_by(")") {
                     children.push(SyntaxElement::Node(self.reject_current_token(
-                        "trailing parameter commas are outside the addition-only Phase 1 slice",
+                        "trailing parameter commas are outside the implemented Phase 1 subset",
                     )));
                     break;
                 }
@@ -150,7 +150,7 @@ impl Parser<'_> {
         self.expect_text("{", &mut children);
         if self.at_text("}") {
             children.push(SyntaxElement::Node(self.reject_empty_region(
-                "the addition-only Phase 1 slice requires a trailing expression",
+                "the implemented Phase 1 subset requires a trailing expression",
             )));
         } else if !self.at_eof() {
             if self.at_expression_start() {
@@ -183,10 +183,12 @@ impl Parser<'_> {
     }
 
     fn parse_multiplicative_expression(&mut self) -> SyntaxNode {
-        SyntaxNode::new(
-            SyntaxKind::MultiplicativeExpression,
-            vec![SyntaxElement::Node(self.parse_unary_expression())],
-        )
+        let mut children = vec![SyntaxElement::Node(self.parse_unary_expression())];
+        while self.at_text("*") || self.at_text("/") || self.at_text("%") {
+            self.bump_expected(&mut children);
+            children.push(SyntaxElement::Node(self.parse_unary_expression()));
+        }
+        SyntaxNode::new(SyntaxKind::MultiplicativeExpression, children)
     }
 
     fn parse_unary_expression(&mut self) -> SyntaxNode {
