@@ -348,10 +348,17 @@ impl Parser<'_> {
     fn parse_block(&mut self) -> SyntaxNode {
         let mut children = Vec::new();
         self.expect_text("{", &mut children);
+        let mut has_statement = false;
+        while self.at_text("let") {
+            children.push(SyntaxElement::Node(self.parse_statement()));
+            has_statement = true;
+        }
         if self.at_text("}") {
-            children.push(SyntaxElement::Node(self.reject_empty_region(
-                "the implemented Phase 1 subset requires a trailing expression",
-            )));
+            if !has_statement {
+                children.push(SyntaxElement::Node(self.reject_empty_region(
+                    "the implemented Phase 1 subset requires a trailing expression",
+                )));
+            }
         } else if !self.at_eof() {
             if self.at_expression_start() {
                 children.push(SyntaxElement::Node(self.parse_expression()));
@@ -364,6 +371,150 @@ impl Parser<'_> {
         }
         self.expect_text("}", &mut children);
         SyntaxNode::new(SyntaxKind::Block, children)
+    }
+
+    fn parse_statement(&mut self) -> SyntaxNode {
+        SyntaxNode::new(
+            SyntaxKind::Statement,
+            vec![SyntaxElement::Node(self.parse_let_statement())],
+        )
+    }
+
+    fn parse_let_statement(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("let", &mut children);
+        children.push(SyntaxElement::Node(self.parse_pattern()));
+        if self.at_text(":") {
+            self.bump_expected(&mut children);
+            if self.at_type_start() {
+                children.push(SyntaxElement::Node(self.parse_type()));
+                if self.at_unsupported_let_type_suffix() {
+                    children.push(SyntaxElement::Node(self.recover_unsupported_let_type()));
+                }
+            } else if self.at_let_type_boundary() {
+                children.push(SyntaxElement::Node(self.parse_type()));
+            } else {
+                children.push(SyntaxElement::Node(self.recover_unsupported_let_type()));
+            }
+        }
+        self.expect_text("=", &mut children);
+        children.push(SyntaxElement::Node(self.parse_expression()));
+        self.expect_text(";", &mut children);
+        SyntaxNode::new(SyntaxKind::LetStatement, children)
+    }
+
+    fn parse_pattern(&mut self) -> SyntaxNode {
+        let binding_is_supported = self.at_identifier()
+            && !self.significant_token_is_followed_by(".")
+            && !self.significant_token_is_followed_by("{");
+        let child = if binding_is_supported
+            || self.at_text(":")
+            || self.at_text("=")
+            || self.at_text(";")
+            || self.at_text("}")
+            || self.at_eof()
+        {
+            SyntaxNode::new(
+                SyntaxKind::BindingPattern,
+                vec![SyntaxElement::Node(self.parse_identifier())],
+            )
+        } else {
+            self.recover_unsupported_let_pattern()
+        };
+        SyntaxNode::new(SyntaxKind::Pattern, vec![SyntaxElement::Node(child)])
+    }
+
+    fn recover_unsupported_let_pattern(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("unsupported let pattern recovery is not called at EOF")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "patterns other than identifier bindings are outside the implemented Phase 1 subset"
+                .to_owned(),
+            None,
+            Some(significant.text),
+        );
+
+        self.take_trivia(&mut children);
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        let mut consumed = false;
+        while !self.at_eof() {
+            let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if consumed
+                && (self.at_text("=")
+                    || self.at_text(";")
+                    || self.at_text("let")
+                    || self.at_top_level_decl_start()
+                    || (brace_depth == 0 && self.at_text("}"))
+                    || (at_outer_boundary && self.at_text(":")))
+            {
+                break;
+            }
+
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                match token.text.as_str() {
+                    "(" => paren_depth += 1,
+                    ")" => paren_depth = paren_depth.saturating_sub(1),
+                    "[" => bracket_depth += 1,
+                    "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                    "{" => brace_depth += 1,
+                    "}" => brace_depth = brace_depth.saturating_sub(1),
+                    _ => {}
+                }
+                consumed = true;
+            }
+            self.bump(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn recover_unsupported_let_type(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("unsupported let type recovery is not called at EOF")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "let binding type is outside the implemented Phase 1 subset".to_owned(),
+            None,
+            Some(significant.text),
+        );
+
+        self.take_trivia(&mut children);
+        let mut brace_depth = 0_u32;
+        let mut consumed = false;
+        while !self.at_eof() {
+            if consumed
+                && (self.at_text("=")
+                    || self.at_text(";")
+                    || self.at_text("let")
+                    || self.at_top_level_decl_start()
+                    || (brace_depth == 0 && self.at_text("}")))
+            {
+                break;
+            }
+
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                match token.text.as_str() {
+                    "{" => brace_depth += 1,
+                    "}" => brace_depth = brace_depth.saturating_sub(1),
+                    _ => {}
+                }
+                consumed = true;
+            }
+            self.bump(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
     }
 
     fn parse_expression(&mut self) -> SyntaxNode {
@@ -923,6 +1074,19 @@ impl Parser<'_> {
 
     fn at_type_start(&self) -> bool {
         self.at_identifier() || self.at_text("Self")
+    }
+
+    fn at_let_type_boundary(&self) -> bool {
+        self.at_text("=")
+            || self.at_text(";")
+            || self.at_text("}")
+            || self.at_text("let")
+            || self.at_eof()
+            || self.at_top_level_decl_start()
+    }
+
+    fn at_unsupported_let_type_suffix(&self) -> bool {
+        !self.at_let_type_boundary() && !self.at_expression_start()
     }
 
     fn at_unsupported_record_field_type_suffix(&self, context: RecordFieldContext) -> bool {

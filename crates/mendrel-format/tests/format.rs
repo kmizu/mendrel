@@ -99,6 +99,40 @@ fn formats_literal_expressions_without_changing_structure() {
 }
 
 #[test]
+fn formats_let_statements_and_keeps_preceding_comments_attached() {
+    let input = concat!(
+        "module demo.main;",
+        "pub fn value(input:I32)->I32{",
+        "let doubled=input*2 /* keep */;",
+        "let adjusted:I32=doubled+1;",
+        "adjusted}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let doubled = input * 2; /* keep */\n",
+        "    let adjusted: I32 = doubled + 1;\n",
+        "    adjusted\n",
+        "}\n",
+    );
+    let parsed = parse_text("let-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid let statements");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("let-format-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn formats_imports_without_changing_structure() {
     let input = concat!(
         "module demo.main;",

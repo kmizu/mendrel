@@ -1541,6 +1541,210 @@ fn rejects_move_parameters_without_resource_semantics() {
 }
 
 #[test]
+fn parses_identifier_let_statements_before_a_trailing_expression() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn total(input: I32) -> I32 {\n",
+        "    let doubled = input * 2;\n",
+        "    let adjusted: I32 = doubled + 1;\n",
+        "    adjusted\n",
+        "}\n",
+    );
+    let result = parse(&source("let-statements.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Pattern), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+        2
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn parses_a_let_only_block_without_requiring_a_trailing_expression() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn remember(input: I32) -> I32 {\n",
+        "    let remembered = input;\n",
+        "}\n",
+    );
+    let result = parse(&source("let-only-block.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_let_pattern_recovers_before_following_statements() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let _ = input;\n",
+        "    let value = input;\n",
+        "    value\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-let-pattern.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("_"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Pattern), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+        1
+    );
+    assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_compound_let_pattern_recovers_at_the_initializer_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let (left, right) = input;\n",
+        "    let value = input;\n",
+        "    value\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-compound-let-pattern.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Pattern), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+        1
+    );
+    assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_let_type_recovers_at_the_initializer_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let wrapped: Box<I32> = input;\n",
+        "    let value = input;\n",
+        "    value\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-let-type.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("<"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+        2
+    );
+    assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn malformed_let_boundaries_recover_without_losing_the_block_tail() {
+    let cases = [
+        (
+            "missing-let-pattern.mnd",
+            "let = input; input",
+            "identifier",
+            1,
+        ),
+        (
+            "missing-let-type.mnd",
+            "let value: = input; value",
+            "type",
+            1,
+        ),
+        ("missing-let-equals.mnd", "let value input; value", "=", 1),
+        (
+            "missing-let-initializer.mnd",
+            "let value = ; input",
+            "expression",
+            1,
+        ),
+        (
+            "missing-let-semicolon-before-statement.mnd",
+            "let first = input let second = first; second",
+            ";",
+            2,
+        ),
+        (
+            "missing-let-semicolon-before-tail.mnd",
+            "let value = input value",
+            ";",
+            1,
+        ),
+    ];
+
+    for (path, body, expected, statement_count) in cases {
+        let text = format!("module demo.main;\npub fn value(input: I32) -> I32 {{ {body} }}\n");
+        let result = parse(&source(path, &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[0].expected(), Some(expected));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Statement),
+            statement_count,
+            "statement loss for {path}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::LetStatement),
+            statement_count,
+            "let loss for {path}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        assert!(contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(!contains_kind(result.tree.root(), SyntaxKind::Error));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn rejects_syntax_beyond_the_implemented_expression_subset() {
     for (name, declaration) in [
         ("empty-parameters", "pub fn value() -> I32 { value }"),
@@ -1608,6 +1812,19 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
         ),
         ("function_decl", "function_head, [ contract_clause ], block"),
         ("block", "\"{\", { statement }, [ expression ], \"}\""),
+        (
+            "statement",
+            "let_statement | var_statement | use_statement | assignment_statement | expression_statement | return_statement | break_statement | continue_statement | while_statement | for_statement",
+        ),
+        (
+            "let_statement",
+            "\"let\", pattern, [ \":\", type ], \"=\", expression, \";\"",
+        ),
+        (
+            "pattern",
+            "wildcard_pattern | literal_pattern | binding_pattern | variant_pattern | record_pattern | tuple_pattern | list_pattern",
+        ),
+        ("binding_pattern", "[ \"move\" ], identifier"),
         (
             "additive_expression",
             "multiplicative_expression, { ( \"+\" | \"-\" ), multiplicative_expression }",

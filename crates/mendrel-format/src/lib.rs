@@ -48,7 +48,7 @@ pub fn format(tree: &SyntaxTree) -> Result<String, FormatError> {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TokenContext {
-    comma_ends_line: bool,
+    line_ending_delimiter: Option<&'static str>,
 }
 
 fn token_contexts(root: &SyntaxNode) -> Vec<TokenContext> {
@@ -59,7 +59,11 @@ fn token_contexts(root: &SyntaxNode) -> Vec<TokenContext> {
 
 fn collect_token_contexts(node: &SyntaxNode, contexts: &mut Vec<TokenContext>) {
     let context = TokenContext {
-        comma_ends_line: matches!(node.kind, SyntaxKind::RecordField | SyntaxKind::EnumVariant),
+        line_ending_delimiter: match node.kind {
+            SyntaxKind::RecordField | SyntaxKind::EnumVariant => Some(","),
+            SyntaxKind::LetStatement => Some(";"),
+            _ => None,
+        },
     };
     for child in &node.children {
         match child {
@@ -73,12 +77,13 @@ fn canonical_token_order(tokens: &[&Token], contexts: &[TokenContext]) -> Vec<us
     let mut order = Vec::with_capacity(tokens.len());
     let mut cursor = 0;
     while cursor < tokens.len() {
-        if tokens[cursor].kind.is_trivia() && contexts[cursor].comma_ends_line {
+        let line_ending_delimiter = contexts[cursor].line_ending_delimiter;
+        if tokens[cursor].kind.is_trivia() && line_ending_delimiter.is_some() {
             let trivia_start = cursor;
             let mut has_comment = false;
             while cursor < tokens.len()
                 && tokens[cursor].kind.is_trivia()
-                && contexts[cursor].comma_ends_line
+                && contexts[cursor].line_ending_delimiter == line_ending_delimiter
             {
                 has_comment |= matches!(
                     tokens[cursor].kind,
@@ -87,10 +92,12 @@ fn canonical_token_order(tokens: &[&Token], contexts: &[TokenContext]) -> Vec<us
                 cursor += 1;
             }
             if has_comment
-                && tokens.get(cursor).is_some_and(|token| token.text == ",")
+                && tokens
+                    .get(cursor)
+                    .is_some_and(|token| Some(token.text.as_str()) == line_ending_delimiter)
                 && contexts
                     .get(cursor)
-                    .is_some_and(|context| context.comma_ends_line)
+                    .is_some_and(|context| context.line_ending_delimiter == line_ending_delimiter)
             {
                 order.push(cursor);
                 order.extend(trivia_start..cursor);
@@ -297,14 +304,14 @@ impl Formatter {
                     } else {
                         self.blank_line();
                     }
-                } else {
+                } else if !(context.line_ending_delimiter == Some(";") && has_following_comment) {
                     self.newline();
                 }
             }
             "," => {
                 self.trim_spaces();
                 self.output.push(',');
-                if context.comma_ends_line {
+                if context.line_ending_delimiter == Some(",") {
                     if !has_following_comment {
                         self.newline();
                     }
