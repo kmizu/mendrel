@@ -168,6 +168,283 @@ fn unterminated_late_grouped_import_does_not_consume_following_declarations() {
 }
 
 #[test]
+fn parses_visible_record_declarations_and_fields_losslessly() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub record Customer {\n",
+        "    pub id: CustomerId,\n",
+        "    internal name: Text,\n",
+        "    email: EmailAddress,\n",
+        "}\n",
+        "record Empty {}\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("records.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordBody), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Visibility), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn parses_self_typed_record_fields_without_stalling() {
+    let text = concat!(
+        "module demo.main;\n",
+        "record Link { next: Self, }\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("self-record-field.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn rejects_deferred_record_header_syntax_without_cascading() {
+    let cases = [
+        (
+            "record-generics.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub record Box<T> { value: T, }\n",
+                "pub fn value(input: I32) -> I32 { input }\n",
+            ),
+            "<",
+        ),
+        (
+            "record-where.mnd",
+            concat!(
+                "module demo.main;\n",
+                "record Ordered where { T: Ord } { value: T, }\n",
+                "pub fn value(input: I32) -> I32 { input }\n",
+            ),
+            "where",
+        ),
+    ];
+
+    for (path, text, actual) in cases {
+        let result = parse(&source(path, text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let record = find_kind(result.tree.root(), SyntaxKind::RecordDecl).expect("record");
+        assert!(contains_kind(record, SyntaxKind::Error));
+        assert!(
+            !contains_zero_width_token(record, TokenKind::Missing),
+            "unexpected missing token for {path}",
+        );
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn rejects_deferred_record_field_types_without_cascading() {
+    let cases = [
+        ("generic", "Box<T>", "<"),
+        ("nested-generic", "Outer<Inner<T>>", "<"),
+        ("tuple", "(I32, I32)", "("),
+        ("reference", "&T", "&"),
+        ("function", "fn(I32) -> I32", "fn"),
+        (
+            "effectful-function",
+            "fn(I32) -> I32 uses { io: Unit }",
+            "fn",
+        ),
+    ];
+
+    for (case, unsupported_type, actual) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "record Broken {{ value: {}, good: Text, }}\n",
+                "record Intact {{}}\n",
+                "pub fn intact(input: I32) -> I32 {{ input }}\n",
+            ),
+            unsupported_type,
+        );
+        let result = parse(&source(&format!("unsupported-{case}-type.mnd"), &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let record = find_kind(result.tree.root(), SyntaxKind::RecordDecl).expect("record");
+        assert!(contains_kind(record, SyntaxKind::Error));
+        assert!(
+            !contains_zero_width_token(record, TokenKind::Missing),
+            "unexpected missing token for {case}",
+        );
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn preserves_the_next_field_after_an_unsupported_type_and_missing_comma() {
+    let cases = [
+        ("generic", "Box<T>", "good: Text"),
+        ("tuple", "(I32, I32)", "pub good: Text"),
+    ];
+
+    for (case, unsupported_type, next_field) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "record Broken {{ bad: {} {}, }}\n",
+                "record Intact {{}}\n",
+                "pub fn intact(input: I32) -> I32 {{ input }}\n",
+            ),
+            unsupported_type, next_field,
+        );
+        let result = parse(&source(
+            &format!("unsupported-{case}-type-missing-comma.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code())
+                .collect::<Vec<_>>(),
+            ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+            "{case}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(result.diagnostics[1].expected(), Some(","));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let record = find_kind(result.tree.root(), SyntaxKind::RecordDecl).expect("record");
+        assert!(contains_kind(record, SyntaxKind::Error));
+        assert!(contains_zero_width_token(record, TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn unterminated_unsupported_field_type_stops_at_the_record_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "record Broken { bad: Box<T, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unterminated-record-field-type.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code())
+            .collect::<Vec<_>>(),
+        ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+        "{:#?}",
+        result.diagnostics,
+    );
+    assert_eq!(result.diagnostics[1].expected(), Some(","));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn malformed_record_boundaries_recover_locally() {
+    let cases = [
+        (
+            "missing-record-field-name.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub record Broken { : CustomerId, good: Text, }\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "identifier",
+            2,
+        ),
+        (
+            "missing-record-field-type.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub record Broken { missing: , good: Text, }\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "type",
+            2,
+        ),
+        (
+            "missing-record-field-comma.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub record Broken { first: I32 second: I32, }\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            ",",
+            2,
+        ),
+        (
+            "missing-record-brace.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub record Broken { first: I32,\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "}",
+            1,
+        ),
+    ];
+
+    for (path, text, expected, field_count) in cases {
+        let result = parse(&source(path, text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[0].expected(), Some(expected));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::RecordField),
+            field_count,
+            "field loss for {path}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let record = find_kind(result.tree.root(), SyntaxKind::RecordDecl).expect("record");
+        assert!(contains_zero_width_token(record, TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn parses_nested_parenthesized_expressions_without_losing_source() {
     let text = concat!(
         "module demo.main;\n",
@@ -552,7 +829,7 @@ fn malformed_function_boundaries_recover_locally() {
 
 #[test]
 fn unsupported_top_level_syntax_becomes_an_error_node() {
-    let text = "module demo.main;\nrecord User {}\n";
+    let text = "module demo.main;\ntrait User {}\n";
     let result = parse(&source("unsupported.mnd", text));
 
     assert_eq!(result.tree.source_text(), text);
@@ -747,6 +1024,16 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
         ),
         ("import_item", "identifier, [ \"as\", identifier ]"),
         ("qualified_name", "identifier, { \".\", identifier }"),
+        ("visibility", "\"pub\" | \"internal\""),
+        (
+            "record_decl",
+            "[ visibility ], \"record\", identifier, [ generic_params ], [ where_clause ], record_body",
+        ),
+        ("record_body", "\"{\", { record_field }, \"}\""),
+        (
+            "record_field",
+            "attributes, [ visibility ], identifier, \":\", type, \",\"",
+        ),
         ("function_decl", "function_head, [ contract_clause ], block"),
         ("block", "\"{\", { statement }, [ expression ], \"}\""),
         (

@@ -43,7 +43,9 @@ impl Parser<'_> {
         }
 
         while !self.at_eof() {
-            if self.at_function_start() {
+            if self.at_record_start() {
+                children.push(SyntaxElement::Node(self.parse_record_decl()));
+            } else if self.at_function_start() {
                 children.push(SyntaxElement::Node(self.parse_function_decl()));
             } else {
                 children.push(SyntaxElement::Node(self.recover_top_level()));
@@ -114,6 +116,69 @@ impl Parser<'_> {
         SyntaxNode::new(SyntaxKind::ImportItem, children)
     }
 
+    fn parse_record_decl(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        if self.at_visibility() {
+            children.push(SyntaxElement::Node(self.parse_visibility()));
+        }
+        self.expect_text("record", &mut children);
+        children.push(SyntaxElement::Node(self.parse_identifier()));
+        if self.at_text("<") || self.at_text("where") {
+            children.push(SyntaxElement::Node(self.recover_top_level()));
+            return SyntaxNode::new(SyntaxKind::RecordDecl, children);
+        }
+        children.push(SyntaxElement::Node(self.parse_record_body()));
+        SyntaxNode::new(SyntaxKind::RecordDecl, children)
+    }
+
+    fn parse_record_body(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("{", &mut children);
+        while !self.at_text("}") && !self.at_eof() && !self.at_top_level_decl_start() {
+            if !self.at_record_field_start() {
+                break;
+            }
+            children.push(SyntaxElement::Node(self.parse_record_field()));
+        }
+        self.expect_text("}", &mut children);
+        SyntaxNode::new(SyntaxKind::RecordBody, children)
+    }
+
+    fn parse_record_field(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        if self.at_visibility() {
+            children.push(SyntaxElement::Node(self.parse_visibility()));
+        }
+        children.push(SyntaxElement::Node(self.parse_identifier()));
+        self.expect_text(":", &mut children);
+        if self.at_type_start() {
+            children.push(SyntaxElement::Node(self.parse_type()));
+            if self.at_unsupported_record_field_type_suffix() {
+                children.push(SyntaxElement::Node(
+                    self.recover_unsupported_record_field_type(),
+                ));
+            }
+        } else if self.at_text(",")
+            || self.at_text("}")
+            || self.at_eof()
+            || self.at_top_level_decl_start()
+        {
+            children.push(SyntaxElement::Node(self.parse_type()));
+        } else {
+            children.push(SyntaxElement::Node(
+                self.recover_unsupported_record_field_type(),
+            ));
+        }
+        self.expect_text(",", &mut children);
+        SyntaxNode::new(SyntaxKind::RecordField, children)
+    }
+
+    fn parse_visibility(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.bump_expected(&mut children);
+        SyntaxNode::new(SyntaxKind::Visibility, children)
+    }
+
     fn parse_function_decl(&mut self) -> SyntaxNode {
         let children = vec![
             SyntaxElement::Node(self.parse_function_head()),
@@ -170,7 +235,9 @@ impl Parser<'_> {
 
     fn parse_type(&mut self) -> SyntaxNode {
         let mut children = Vec::new();
-        if self.at_identifier() || self.at_text("Self") {
+        if self.at_text("Self") {
+            self.bump_expected(&mut children);
+        } else if self.at_identifier() {
             children.push(SyntaxElement::Node(self.parse_qualified_name()));
         } else {
             self.insert_missing("type", &mut children);
@@ -360,7 +427,7 @@ impl Parser<'_> {
         let significant = self
             .top_level_error_token()
             .expect("top-level recovery is not called at EOF");
-        let stop_unterminated_region_at_function = significant.text == "import";
+        let stop_unterminated_import_at_declaration = significant.text == "import";
         let span = significant.span;
         let actual = significant.text.clone();
         self.push_diagnostic(
@@ -376,8 +443,8 @@ impl Parser<'_> {
         let mut consumed = false;
         while !self.at_eof() {
             if consumed
-                && (brace_depth == 0 || stop_unterminated_region_at_function)
-                && self.at_function_start()
+                && (brace_depth == 0 || stop_unterminated_import_at_declaration)
+                && self.at_top_level_decl_start()
             {
                 break;
             }
@@ -431,6 +498,57 @@ impl Parser<'_> {
         SyntaxNode::new(SyntaxKind::Error, children)
     }
 
+    fn recover_unsupported_record_field_type(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("record field type recovery is not called at EOF")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "record field type is outside the implemented Phase 1 subset".to_owned(),
+            None,
+            Some(significant.text),
+        );
+
+        self.take_trivia(&mut children);
+        let mut angle_depth = 0_u32;
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        while !self.at_eof() {
+            let at_outer_boundary =
+                angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if (brace_depth == 0 && self.at_text("}"))
+                || (at_outer_boundary
+                    && (self.at_text(",")
+                        || self.at_record_field_boundary()
+                        || self.at_top_level_decl_start()))
+            {
+                break;
+            }
+
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                match token.text.as_str() {
+                    "<" => angle_depth += 1,
+                    ">" => angle_depth = angle_depth.saturating_sub(1),
+                    ">>" => angle_depth = angle_depth.saturating_sub(2),
+                    "(" => paren_depth += 1,
+                    ")" => paren_depth = paren_depth.saturating_sub(1),
+                    "[" => bracket_depth += 1,
+                    "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                    "{" => brace_depth += 1,
+                    "}" => brace_depth = brace_depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            self.bump(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
     fn reject_current_token(&mut self, summary: &str) -> SyntaxNode {
         let mut children = Vec::new();
         let significant = self
@@ -476,6 +594,84 @@ impl Parser<'_> {
         self.tokens
             .get(index)
             .is_some_and(|token| token.text == "fn")
+    }
+
+    fn at_record_start(&self) -> bool {
+        if self.at_text("record") {
+            return true;
+        }
+        if !self.at_visibility() {
+            return false;
+        }
+        let current = self.significant_index();
+        let next = self.next_significant_index(current + 1);
+        self.tokens
+            .get(next)
+            .is_some_and(|token| token.text == "record")
+    }
+
+    fn at_top_level_decl_start(&self) -> bool {
+        self.at_record_start() || self.at_function_start()
+    }
+
+    fn at_record_field_start(&self) -> bool {
+        if self.at_identifier() || self.at_text(":") {
+            return true;
+        }
+        if !self.at_visibility() {
+            return false;
+        }
+        let current = self.significant_index();
+        let next = self.next_significant_index(current + 1);
+        self.tokens
+            .get(next)
+            .is_some_and(|token| token.kind == TokenKind::Identifier || token.text == ":")
+    }
+
+    fn at_record_field_boundary(&self) -> bool {
+        let current = self.significant_index();
+        let Some(token) = self.tokens.get(current) else {
+            return false;
+        };
+        if token.text == ":" {
+            return true;
+        }
+
+        let name = if matches!(token.text.as_str(), "pub" | "internal") {
+            self.next_significant_index(current + 1)
+        } else {
+            current
+        };
+        let Some(name_token) = self.tokens.get(name) else {
+            return false;
+        };
+        if name_token.text == ":" {
+            return true;
+        }
+        if name_token.kind != TokenKind::Identifier {
+            return false;
+        }
+
+        let colon = self.next_significant_index(name + 1);
+        self.tokens
+            .get(colon)
+            .is_some_and(|token| token.text == ":")
+    }
+
+    fn at_visibility(&self) -> bool {
+        self.at_text("pub") || self.at_text("internal")
+    }
+
+    fn at_type_start(&self) -> bool {
+        self.at_identifier() || self.at_text("Self")
+    }
+
+    fn at_unsupported_record_field_type_suffix(&self) -> bool {
+        !self.at_text(",")
+            && !self.at_text("}")
+            && !self.at_eof()
+            && !self.at_top_level_decl_start()
+            && !self.at_record_field_start()
     }
 
     fn top_level_error_token(&self) -> Option<&Token> {

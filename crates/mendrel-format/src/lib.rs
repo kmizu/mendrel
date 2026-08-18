@@ -1,7 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-use mendrel_syntax::{SPACED_OPERATORS, SyntaxTree, Token, TokenKind};
+use mendrel_syntax::{
+    SPACED_OPERATORS, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxTree, Token, TokenKind,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FormatError {
@@ -27,14 +29,81 @@ pub fn format(tree: &SyntaxTree) -> Result<String, FormatError> {
 
     let mut formatter = Formatter::default();
     let tokens = tree.tokens();
-    for (index, token) in tokens.iter().enumerate() {
+    let contexts = token_contexts(tree.root());
+    if tokens.len() != contexts.len() {
+        return Err(FormatError::MalformedTree);
+    }
+    let order = canonical_token_order(&tokens, &contexts);
+    let ordered_tokens = order.iter().map(|index| tokens[*index]).collect::<Vec<_>>();
+    for (position, index) in order.into_iter().enumerate() {
         formatter.token(
-            token,
-            has_following_comment_on_same_line(&tokens, index),
-            next_code_text(&tokens, index),
+            tokens[index],
+            has_following_comment_on_same_line(&ordered_tokens, position),
+            next_code_text(&ordered_tokens, position),
+            contexts[index],
         );
     }
     Ok(formatter.finish())
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TokenContext {
+    in_record_field: bool,
+}
+
+fn token_contexts(root: &SyntaxNode) -> Vec<TokenContext> {
+    let mut contexts = Vec::new();
+    collect_token_contexts(root, &mut contexts);
+    contexts
+}
+
+fn collect_token_contexts(node: &SyntaxNode, contexts: &mut Vec<TokenContext>) {
+    let context = TokenContext {
+        in_record_field: node.kind == SyntaxKind::RecordField,
+    };
+    for child in &node.children {
+        match child {
+            SyntaxElement::Node(child) => collect_token_contexts(child, contexts),
+            SyntaxElement::Token(_) => contexts.push(context),
+        }
+    }
+}
+
+fn canonical_token_order(tokens: &[&Token], contexts: &[TokenContext]) -> Vec<usize> {
+    let mut order = Vec::with_capacity(tokens.len());
+    let mut cursor = 0;
+    while cursor < tokens.len() {
+        if tokens[cursor].kind.is_trivia() && contexts[cursor].in_record_field {
+            let trivia_start = cursor;
+            let mut has_comment = false;
+            while cursor < tokens.len()
+                && tokens[cursor].kind.is_trivia()
+                && contexts[cursor].in_record_field
+            {
+                has_comment |= matches!(
+                    tokens[cursor].kind,
+                    TokenKind::LineComment | TokenKind::BlockComment
+                );
+                cursor += 1;
+            }
+            if has_comment
+                && tokens.get(cursor).is_some_and(|token| token.text == ",")
+                && contexts
+                    .get(cursor)
+                    .is_some_and(|context| context.in_record_field)
+            {
+                order.push(cursor);
+                order.extend(trivia_start..cursor);
+                cursor += 1;
+                continue;
+            }
+            order.extend(trivia_start..cursor);
+            continue;
+        }
+        order.push(cursor);
+        cursor += 1;
+    }
+    order
 }
 
 fn has_following_comment_on_same_line(tokens: &[&Token], index: usize) -> bool {
@@ -83,7 +152,13 @@ struct Formatter {
 }
 
 impl Formatter {
-    fn token(&mut self, token: &Token, has_following_comment: bool, next_code_text: Option<&str>) {
+    fn token(
+        &mut self,
+        token: &Token,
+        has_following_comment: bool,
+        next_code_text: Option<&str>,
+        context: TokenContext,
+    ) {
         match token.kind {
             TokenKind::Whitespace | TokenKind::Eof | TokenKind::Missing => {}
             TokenKind::LineComment => self.line_comment(&token.text),
@@ -91,7 +166,7 @@ impl Formatter {
                 self.block_comment(&token.text, has_following_comment);
             }
             TokenKind::Punctuation => {
-                self.punctuation(&token.text, has_following_comment, next_code_text);
+                self.punctuation(&token.text, has_following_comment, next_code_text, context);
             }
             TokenKind::Identifier
             | TokenKind::Keyword
@@ -151,6 +226,7 @@ impl Formatter {
         text: &str,
         has_following_comment: bool,
         next_code_text: Option<&str>,
+        context: TokenContext,
     ) {
         match text {
             "{" => {
@@ -227,7 +303,13 @@ impl Formatter {
             "," => {
                 self.trim_spaces();
                 self.output.push(',');
-                self.output.push(' ');
+                if context.in_record_field {
+                    if !has_following_comment {
+                        self.newline();
+                    }
+                } else {
+                    self.output.push(' ');
+                }
             }
             ":" => {
                 self.trim_spaces();

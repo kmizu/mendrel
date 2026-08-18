@@ -229,6 +229,107 @@ fn keeps_block_comments_around_grouped_import_braces_inline() {
 }
 
 #[test]
+fn formats_record_fields_without_changing_structure() {
+    let input = concat!(
+        "module demo.main;",
+        "pub record Customer{pub id:CustomerId,internal name:Text,email:EmailAddress,}",
+        "record Empty{}",
+        "pub fn value(input:I32)->I32{input}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub record Customer {\n",
+        "    pub id: CustomerId,\n",
+        "    internal name: Text,\n",
+        "    email: EmailAddress,\n",
+        "}\n\n",
+        "record Empty {\n",
+        "}\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    input\n",
+        "}\n",
+    );
+    let parsed = parse_text("record-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid records");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("record-format-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
+fn keeps_record_field_comments_attached() {
+    let input = concat!(
+        "module demo.main;",
+        "pub record Customer{id:CustomerId, // stable id\n",
+        "/* display name */name:Text,}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub record Customer {\n",
+        "    id: CustomerId, // stable id\n",
+        "    /* display name */\n",
+        "    name: Text,\n",
+        "}\n",
+    );
+    let parsed = parse_text("record-comments.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented record");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("record-comments-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
+fn places_record_field_commas_before_preceding_comments() {
+    let input = concat!(
+        "module demo.main;",
+        "record Commented{line:I32 // line comment\n",
+        ",block:Text /* block comment */ ,}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "record Commented {\n",
+        "    line: I32, // line comment\n",
+        "    block: Text, /* block comment */\n",
+        "}\n",
+    );
+    let parsed = parse_text("record-comment-before-comma.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented record");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("record-comment-before-comma-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_binary_operator_spacing_before_parenthesized_operands() {
     let cases = [
         ("left+(right)", "left + (right)"),
