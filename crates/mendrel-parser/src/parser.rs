@@ -213,10 +213,24 @@ impl Parser<'_> {
                     vec![SyntaxElement::Node(self.parse_identifier())],
                 ))],
             )));
+        } else if self.at_text("(") {
+            children.push(SyntaxElement::Node(self.parse_parenthesized_expression()));
         } else {
             self.insert_missing("expression", &mut children);
         }
         SyntaxNode::new(SyntaxKind::PrimaryExpression, children)
+    }
+
+    fn parse_parenthesized_expression(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("(", &mut children);
+        if self.at_expression_start() {
+            children.push(SyntaxElement::Node(self.parse_expression()));
+        } else {
+            self.insert_missing("expression", &mut children);
+        }
+        self.expect_text(")", &mut children);
+        SyntaxNode::new(SyntaxKind::ParenthesizedExpression, children)
     }
 
     fn recover_top_level(&mut self) -> SyntaxNode {
@@ -353,7 +367,7 @@ impl Parser<'_> {
     }
 
     fn at_expression_start(&self) -> bool {
-        self.at_identifier()
+        self.at_identifier() || self.at_text("(")
     }
 
     fn significant_token_is_followed_by(&self, expected: &str) -> bool {

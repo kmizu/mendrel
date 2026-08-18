@@ -14,6 +14,18 @@ fn contains_kind(node: &SyntaxNode, expected: SyntaxKind) -> bool {
         })
 }
 
+fn count_kind(node: &SyntaxNode, expected: SyntaxKind) -> usize {
+    usize::from(node.kind == expected)
+        + node
+            .children
+            .iter()
+            .map(|child| match child {
+                SyntaxElement::Node(child) => count_kind(child, expected),
+                SyntaxElement::Token(_) => 0,
+            })
+            .sum::<usize>()
+}
+
 #[test]
 fn parses_the_first_slice_into_a_lossless_cst() {
     let text = include_str!("fixtures/first_slice.mnd");
@@ -33,6 +45,49 @@ fn parses_the_first_slice_into_a_lossless_cst() {
         assert!(contains_kind(result.tree.root(), kind), "missing {kind:?}");
     }
     assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn parses_nested_parenthesized_expressions_without_losing_source() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn grouped(left: I32, right: I32) -> I32 { (left + (right)) }\n",
+    );
+    let result = parse(&source("parenthesized.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ParenthesizedExpression),
+        2,
+    );
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_closing_parenthesis_without_consuming_the_block_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn broken(value: I32) -> I32 { (value + value }\n",
+        "pub fn intact(value: I32) -> I32 { value }\n",
+    );
+    let result = parse(&source("missing-parenthesis.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some(")"));
+    assert_eq!(result.diagnostics[0].fixes().len(), 1);
+    assert_eq!(
+        result.diagnostics[0].fixes()[0].text_edits()[0].replacement(),
+        ")",
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ParenthesizedExpression),
+        1,
+    );
+    assert!(result.tree.has_recovery());
 }
 
 #[test]
@@ -268,10 +323,6 @@ fn rejects_syntax_beyond_the_addition_only_vertical_slice() {
             "pub fn value(input: I32) -> I32 { math.input }",
         ),
         (
-            "parenthesized-expression",
-            "pub fn value(input: I32) -> I32 { (input) }",
-        ),
-        (
             "unary-expression",
             "pub fn value(input: I32) -> I32 { -input }",
         ),
@@ -322,6 +373,7 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
             "multiplicative_expression",
             "unary_expression, { ( \"*\" | \"/\" | \"%\" ), unary_expression }",
         ),
+        ("parenthesized_expression", "\"(\", expression, \")\""),
     ] {
         assert_eq!(
             production_rule(production),

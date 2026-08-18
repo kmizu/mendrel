@@ -158,7 +158,12 @@ impl Formatter {
                 self.output.push(':');
                 self.output.push(' ');
             }
-            "(" | "[" => {
+            "(" => {
+                self.trim_spaces();
+                self.write_indent();
+                self.output.push_str(text);
+            }
+            "[" => {
                 self.trim_spaces();
                 self.output.push_str(text);
             }
