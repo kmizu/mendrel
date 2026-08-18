@@ -1711,6 +1711,8 @@ fn expression_shaped_unsupported_let_types_recover_at_the_initializer_boundary()
     for (case, unsupported_type, actual) in [
         ("call-shaped", "Foo(Bar)", "("),
         ("adjacent-name", "Foo Bar", "Bar"),
+        ("nested-paren-boundary", "Foo(Bar = Baz)", "("),
+        ("nested-bracket-boundary", "Foo[Bar = Baz]", "["),
     ] {
         let text = format!(
             concat!(

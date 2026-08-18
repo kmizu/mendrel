@@ -491,12 +491,14 @@ impl Parser<'_> {
         );
 
         self.take_trivia(&mut children);
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
         let mut consumed = false;
         while !self.at_eof() {
+            let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
             if consumed
-                && (self.at_text("=")
-                    || self.at_text(";")
+                && ((at_outer_boundary && (self.at_text("=") || self.at_text(";")))
                     || self.at_text("let")
                     || self.at_top_level_decl_start()
                     || (brace_depth == 0 && self.at_text("}")))
@@ -507,6 +509,10 @@ impl Parser<'_> {
             let token = self.tokens[self.cursor].clone();
             if !token.kind.is_trivia() {
                 match token.text.as_str() {
+                    "(" => paren_depth += 1,
+                    ")" => paren_depth = paren_depth.saturating_sub(1),
+                    "[" => bracket_depth += 1,
+                    "]" => bracket_depth = bracket_depth.saturating_sub(1),
                     "{" => brace_depth += 1,
                     "}" => brace_depth = brace_depth.saturating_sub(1),
                     _ => {}
@@ -1105,12 +1111,14 @@ impl Parser<'_> {
             }
 
             let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
-            if at_outer_boundary {
-                match token.text.as_str() {
-                    "=" => return true,
-                    ";" | "let" | "}" | "pub" | "record" | "enum" => return false,
-                    _ => {}
-                }
+            if at_outer_boundary && token.text == "=" {
+                return true;
+            }
+            if (at_outer_boundary && token.text == ";")
+                || matches!(token.text.as_str(), "let" | "pub" | "record" | "enum")
+                || (brace_depth == 0 && token.text == "}")
+            {
+                return false;
             }
 
             match token.text.as_str() {
