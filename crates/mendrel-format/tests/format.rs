@@ -167,6 +167,37 @@ fn keeps_trailing_import_comments_attached() {
 }
 
 #[test]
+fn keeps_grouped_import_block_comments_inline() {
+    let input = concat!(
+        "module demo.main;",
+        "import billing.tax.{TaxRate,/* keep */calculate_tax,};",
+        "pub fn value(input:I32)->I32{input}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "import billing.tax.{TaxRate, /* keep */ calculate_tax,};\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    input\n",
+        "}\n",
+    );
+    let parsed = parse_text("grouped-import-comment.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented grouped import");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("grouped-import-comment-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_binary_operator_spacing_before_parenthesized_operands() {
     let cases = [
         ("left+(right)", "left + (right)"),

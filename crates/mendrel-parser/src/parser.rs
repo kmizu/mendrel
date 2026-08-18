@@ -360,6 +360,7 @@ impl Parser<'_> {
         let significant = self
             .top_level_error_token()
             .expect("top-level recovery is not called at EOF");
+        let stop_unterminated_region_at_function = significant.text == "import";
         let span = significant.span;
         let actual = significant.text.clone();
         self.push_diagnostic(
@@ -374,7 +375,10 @@ impl Parser<'_> {
         let mut brace_depth = 0_u32;
         let mut consumed = false;
         while !self.at_eof() {
-            if consumed && brace_depth == 0 && self.at_function_start() {
+            if consumed
+                && (brace_depth == 0 || stop_unterminated_region_at_function)
+                && self.at_function_start()
+            {
                 break;
             }
             let token = self.tokens[self.cursor].clone();

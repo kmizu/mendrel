@@ -148,6 +148,26 @@ fn rejects_imports_after_top_level_declarations_without_losing_following_declara
 }
 
 #[test]
+fn unterminated_late_grouped_import_does_not_consume_following_declarations() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn first(input: I32) -> I32 { input }\n",
+        "import billing.tax.{TaxRate,\n",
+        "pub fn second(input: I32) -> I32 { input }\n",
+        "pub fn third(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unterminated-late-import.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportDecl), 0);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn parses_nested_parenthesized_expressions_without_losing_source() {
     let text = concat!(
         "module demo.main;\n",

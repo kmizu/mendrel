@@ -119,6 +119,10 @@ impl Formatter {
             self.ensure_space();
         }
         self.output.push_str(text);
+        if self.brace_layouts.last() == Some(&BraceLayout::Inline) {
+            self.ensure_space();
+            return;
+        }
         if self.pending_top_level_separator && has_following_comment {
             return;
         }
