@@ -1646,6 +1646,37 @@ fn unsupported_compound_let_pattern_recovers_at_the_initializer_boundary() {
 }
 
 #[test]
+fn unsupported_identifier_led_let_pattern_recovers_at_the_initializer_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let Foo(bar) = input;\n",
+        "    let value = input;\n",
+        "    value\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-identifier-led-let-pattern.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("Foo"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Pattern), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+        1
+    );
+    assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn unsupported_let_type_recovers_at_the_initializer_boundary() {
     let text = concat!(
         "module demo.main;\n",
@@ -1676,6 +1707,49 @@ fn unsupported_let_type_recovers_at_the_initializer_boundary() {
 }
 
 #[test]
+fn expression_shaped_unsupported_let_types_recover_at_the_initializer_boundary() {
+    for (case, unsupported_type, actual) in [
+        ("call-shaped", "Foo(Bar)", "("),
+        ("adjacent-name", "Foo Bar", "Bar"),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    let wrapped: {} = input;\n",
+                "    let value = input;\n",
+                "    value\n",
+                "}}\n",
+            ),
+            unsupported_type,
+        );
+        let result = parse(&source(&format!("unsupported-{case}-let-type.mnd"), &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::BindingPattern),
+            2
+        );
+        assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn malformed_let_boundaries_recover_without_losing_the_block_tail() {
     let cases = [
         (
@@ -1691,6 +1765,12 @@ fn malformed_let_boundaries_recover_without_losing_the_block_tail() {
             1,
         ),
         ("missing-let-equals.mnd", "let value input; value", "=", 1),
+        (
+            "missing-let-equals-after-type.mnd",
+            "let value: I32 input; value",
+            "=",
+            1,
+        ),
         (
             "missing-let-initializer.mnd",
             "let value = ; input",

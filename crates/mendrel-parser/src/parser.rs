@@ -406,7 +406,8 @@ impl Parser<'_> {
     fn parse_pattern(&mut self) -> SyntaxNode {
         let binding_is_supported = self.at_identifier()
             && !self.significant_token_is_followed_by(".")
-            && !self.significant_token_is_followed_by("{");
+            && !self.significant_token_is_followed_by("{")
+            && !self.significant_token_is_followed_by("(");
         let child = if binding_is_supported
             || self.at_text(":")
             || self.at_text("=")
@@ -1086,7 +1087,43 @@ impl Parser<'_> {
     }
 
     fn at_unsupported_let_type_suffix(&self) -> bool {
-        !self.at_let_type_boundary() && !self.at_expression_start()
+        !self.at_let_type_boundary()
+            && (!self.at_expression_start() || self.let_initializer_separator_follows())
+    }
+
+    fn let_initializer_separator_follows(&self) -> bool {
+        let mut index = self.significant_index();
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        loop {
+            let Some(token) = self.tokens.get(index) else {
+                return false;
+            };
+            if token.kind == TokenKind::Eof {
+                return false;
+            }
+
+            let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if at_outer_boundary {
+                match token.text.as_str() {
+                    "=" => return true,
+                    ";" | "let" | "}" | "pub" | "record" | "enum" => return false,
+                    _ => {}
+                }
+            }
+
+            match token.text.as_str() {
+                "(" => paren_depth += 1,
+                ")" => paren_depth = paren_depth.saturating_sub(1),
+                "[" => bracket_depth += 1,
+                "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                "{" => brace_depth += 1,
+                "}" => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            index = self.next_significant_index(index + 1);
+        }
     }
 
     fn at_unsupported_record_field_type_suffix(&self, context: RecordFieldContext) -> bool {
