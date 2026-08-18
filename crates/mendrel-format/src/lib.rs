@@ -159,18 +159,6 @@ impl Formatter {
                 self.output.push(' ');
             }
             "(" => {
-                let follows_spaced_operator =
-                    self.previous_significant
-                        .as_ref()
-                        .is_some_and(|(kind, previous_text)| {
-                            *kind == TokenKind::Punctuation
-                                && SPACED_OPERATORS
-                                    .binary_search(&previous_text.as_str())
-                                    .is_ok()
-                        });
-                if !follows_spaced_operator {
-                    self.trim_spaces();
-                }
                 self.write_indent();
                 self.output.push_str(text);
             }

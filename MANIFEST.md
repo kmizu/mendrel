@@ -26,7 +26,7 @@
 | `docs/11-security-threat-model.md` | 15,249 | `10467080c7cdf220995a2a09f7a9de47059a4bfd6ec7ba200909045252ce9034` | 脅威モデルと trust boundary |
 | `docs/12-references.md` | 14,363 | `357fceb14b38abbadad2eb7552053be027407d0c534c97f15c4954b8863089ba` | 一次資料と design lineage |
 | `docs/13-derived-layers-and-lineage.md` | 15,358 | `6d3bcf7d5a4d6c5b2a1f92c41ffa8f561df2ae2fd74aa35bf879c1a427037cb1` | Onion・ASTER・Klassic・Macro PEG の derived layer 統合 |
-| `docs/internal/design-pack-overview.md` | 4,611 | `4600e88b6f731553882cacbfecf18487d396ec257b501f058af585e6d982d323` | implementation-facing design-pack index and bootstrap boundary |
+| `docs/internal/design-pack-overview.md` | 4,725 | `b8b82a5257ce95d64edce8637ba97bf6c8e8b6e203137d59dc937257742206c3` | implementation-facing design-pack index and bootstrap boundary |
 | `examples/Mendrel.pkg` | 1,039 | `4ae311ad8ad416e59786c41542251b2ceb7b1e485c610e3f1c9a816401a5f3ef` | declarative package manifest example |
 | `examples/checkout_service.mnd` | 3,290 | `d4c5615d8b63f6c55876349bbe1416641ebc4b369324a824b36eacfc1673cebb` | production-oriented Mendrel example |
 | `examples/diagnostic.jsonl` | 1,836 | `d2766ee036d4938c7002c0ce6e6ef2fc0aca033bb0b68306af7bcc3cac0870e0` | schema-valid diagnostic example |

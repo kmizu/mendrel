@@ -107,6 +107,37 @@ fn keeps_binary_operator_spacing_before_parenthesized_operands() {
 }
 
 #[test]
+fn keeps_canonical_spaces_before_parenthesized_call_arguments() {
+    let input = concat!(
+        "module demo.main;",
+        "pub fn invoke(value:I32)->I32{",
+        "apply ( ) ( value , ( value ) , named : ( value + value ) , )",
+        "}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub fn invoke(value: I32) -> I32 {\n",
+        "    apply()(value, (value), named: (value + value),)\n",
+        "}\n",
+    );
+    let parsed = parse_text("call-spacing.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid call expression");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("call-spacing-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn preserves_comment_text_and_relative_order() {
     let input = "// file\nmodule demo.main;\n/* add */\npub fn add(left:I32,right:I32)->I32{/* sum */\nleft+right}";
     let parsed = parse_text("comments.mnd", input);

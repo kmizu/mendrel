@@ -197,10 +197,45 @@ impl Parser<'_> {
     }
 
     fn parse_postfix_expression(&mut self) -> SyntaxNode {
-        SyntaxNode::new(
-            SyntaxKind::PostfixExpression,
-            vec![SyntaxElement::Node(self.parse_primary_expression())],
-        )
+        let mut children = vec![SyntaxElement::Node(self.parse_primary_expression())];
+        while self.at_text("(") {
+            children.push(SyntaxElement::Node(SyntaxNode::new(
+                SyntaxKind::PostfixSuffix,
+                vec![SyntaxElement::Node(self.parse_call_suffix())],
+            )));
+        }
+        SyntaxNode::new(SyntaxKind::PostfixExpression, children)
+    }
+
+    fn parse_call_suffix(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("(", &mut children);
+        if !self.at_text(")") {
+            children.push(SyntaxElement::Node(self.parse_argument()));
+            while self.at_text(",") {
+                self.bump_expected(&mut children);
+                if self.at_text(")") {
+                    break;
+                }
+                children.push(SyntaxElement::Node(self.parse_argument()));
+            }
+        }
+        self.expect_text(")", &mut children);
+        SyntaxNode::new(SyntaxKind::CallSuffix, children)
+    }
+
+    fn parse_argument(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        if self.at_identifier() && self.significant_token_is_followed_by(":") {
+            children.push(SyntaxElement::Node(self.parse_identifier()));
+            self.expect_text(":", &mut children);
+        }
+        if self.at_expression_start() {
+            children.push(SyntaxElement::Node(self.parse_expression()));
+        } else {
+            self.insert_missing("expression", &mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Argument, children)
     }
 
     fn parse_primary_expression(&mut self) -> SyntaxNode {

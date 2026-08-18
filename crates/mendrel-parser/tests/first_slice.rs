@@ -65,6 +65,45 @@ fn parses_nested_parenthesized_expressions_without_losing_source() {
 }
 
 #[test]
+fn parses_chained_calls_with_named_arguments_and_a_trailing_comma() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn invoke(value: I32) -> I32 { apply()(value, named: (value + value),) }\n",
+    );
+    let result = parse(&source("calls.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::CallSuffix), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::PostfixSuffix), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Argument), 2);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_call_parenthesis_without_consuming_the_block_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn broken(value: I32) -> I32 { apply(value }\n",
+        "pub fn intact(value: I32) -> I32 { value }\n",
+    );
+    let result = parse(&source("missing-call-parenthesis.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some(")"));
+    assert_eq!(result.diagnostics[0].fixes().len(), 1);
+    assert_eq!(
+        result.diagnostics[0].fixes()[0].text_edits()[0].replacement(),
+        ")",
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::CallSuffix), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn inserts_a_missing_closing_parenthesis_without_consuming_the_block_boundary() {
     let text = concat!(
         "module demo.main;\n",
@@ -373,6 +412,19 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
             "multiplicative_expression",
             "unary_expression, { ( \"*\" | \"/\" | \"%\" ), unary_expression }",
         ),
+        (
+            "postfix_expression",
+            "primary_expression, { postfix_suffix }",
+        ),
+        (
+            "postfix_suffix",
+            "type_apply_suffix | call_suffix | member_suffix | index_suffix | await_suffix | try_suffix | with_suffix",
+        ),
+        (
+            "call_suffix",
+            "\"(\", [ argument, { \",\", argument }, [ \",\" ] ], \")\"",
+        ),
+        ("argument", "[ identifier, \":\" ], expression"),
         ("parenthesized_expression", "\"(\", expression, \")\""),
     ] {
         assert_eq!(
