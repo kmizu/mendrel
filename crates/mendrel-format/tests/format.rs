@@ -99,6 +99,74 @@ fn formats_literal_expressions_without_changing_structure() {
 }
 
 #[test]
+fn formats_imports_without_changing_structure() {
+    let input = concat!(
+        "module demo.main;",
+        "import billing.money.Money;",
+        "import billing.tax.{TaxRate,calculate_tax as compute_tax,};",
+        "import billing.clock.Clock as BillingClock;",
+        "pub fn value(input:I32)->I32{input}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "import billing.money.Money;\n",
+        "import billing.tax.{TaxRate, calculate_tax as compute_tax,};\n",
+        "import billing.clock.Clock as BillingClock;\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    input\n",
+        "}\n",
+    );
+    let parsed = parse_text("imports.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid imports");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("imports-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
+fn keeps_trailing_import_comments_attached() {
+    let input = concat!(
+        "module demo.main;",
+        "import billing.money.Money; // money\n",
+        "import billing.tax.{TaxRate,}; // tax\n",
+        "pub fn value(input:I32)->I32{input}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "import billing.money.Money; // money\n",
+        "import billing.tax.{TaxRate,}; // tax\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    input\n",
+        "}\n",
+    );
+    let parsed = parse_text("import-comments.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented imports");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("import-comments-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_binary_operator_spacing_before_parenthesized_operands() {
     let cases = [
         ("left+(right)", "left + (right)"),

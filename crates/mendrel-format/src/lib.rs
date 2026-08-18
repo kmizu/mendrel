@@ -28,7 +28,11 @@ pub fn format(tree: &SyntaxTree) -> Result<String, FormatError> {
     let mut formatter = Formatter::default();
     let tokens = tree.tokens();
     for (index, token) in tokens.iter().enumerate() {
-        formatter.token(token, has_following_comment_on_same_line(&tokens, index));
+        formatter.token(
+            token,
+            has_following_comment_on_same_line(&tokens, index),
+            next_code_text(&tokens, index),
+        );
     }
     Ok(formatter.finish())
 }
@@ -45,17 +49,41 @@ fn has_following_comment_on_same_line(tokens: &[&Token], index: usize) -> bool {
     false
 }
 
+fn next_code_text<'a>(tokens: &'a [&Token], index: usize) -> Option<&'a str> {
+    tokens[index + 1..]
+        .iter()
+        .find(|token| {
+            !matches!(
+                token.kind,
+                TokenKind::Whitespace
+                    | TokenKind::LineComment
+                    | TokenKind::BlockComment
+                    | TokenKind::Eof
+                    | TokenKind::Missing
+            )
+        })
+        .map(|token| token.text.as_str())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BraceLayout {
+    Block,
+    Inline,
+}
+
 #[derive(Default)]
 struct Formatter {
     output: String,
     indent: usize,
     module_terminated: bool,
+    in_import: bool,
     pending_top_level_separator: bool,
+    brace_layouts: Vec<BraceLayout>,
     previous_significant: Option<(TokenKind, String)>,
 }
 
 impl Formatter {
-    fn token(&mut self, token: &Token, has_following_comment: bool) {
+    fn token(&mut self, token: &Token, has_following_comment: bool, next_code_text: Option<&str>) {
         match token.kind {
             TokenKind::Whitespace | TokenKind::Eof | TokenKind::Missing => {}
             TokenKind::LineComment => self.line_comment(&token.text),
@@ -63,7 +91,7 @@ impl Formatter {
                 self.block_comment(&token.text, has_following_comment);
             }
             TokenKind::Punctuation => {
-                self.punctuation(&token.text, has_following_comment);
+                self.punctuation(&token.text, has_following_comment, next_code_text);
             }
             TokenKind::Identifier
             | TokenKind::Keyword
@@ -99,6 +127,9 @@ impl Formatter {
     }
 
     fn word(&mut self, kind: TokenKind, text: &str) {
+        if self.indent == 0 && text == "import" {
+            self.in_import = true;
+        }
         self.write_indent();
         if self
             .previous_significant
@@ -111,29 +142,60 @@ impl Formatter {
         self.previous_significant = Some((kind, text.to_owned()));
     }
 
-    fn punctuation(&mut self, text: &str, has_following_comment: bool) {
+    fn punctuation(
+        &mut self,
+        text: &str,
+        has_following_comment: bool,
+        next_code_text: Option<&str>,
+    ) {
         match text {
             "{" => {
-                self.ensure_space();
-                self.output.push('{');
-                self.newline();
-                self.indent += 1;
-            }
-            "}" => {
-                if !self.at_line_start() {
-                    self.newline();
-                }
-                self.indent = self.indent.saturating_sub(1);
-                self.write_indent();
-                self.output.push('}');
-                if self.indent == 0 {
-                    if has_following_comment {
-                        self.pending_top_level_separator = true;
-                    } else {
-                        self.blank_line();
+                let layout = if self.in_import
+                    && self
+                        .previous_significant
+                        .as_ref()
+                        .is_some_and(|(kind, previous)| {
+                            *kind == TokenKind::Punctuation && previous == "."
+                        }) {
+                    BraceLayout::Inline
+                } else {
+                    BraceLayout::Block
+                };
+                self.brace_layouts.push(layout);
+                match layout {
+                    BraceLayout::Inline => {
+                        self.trim_spaces();
+                        self.output.push('{');
+                    }
+                    BraceLayout::Block => {
+                        self.ensure_space();
+                        self.output.push('{');
+                        self.newline();
+                        self.indent += 1;
                     }
                 }
             }
+            "}" => match self.brace_layouts.pop().unwrap_or(BraceLayout::Block) {
+                BraceLayout::Inline => {
+                    self.trim_spaces();
+                    self.output.push('}');
+                }
+                BraceLayout::Block => {
+                    if !self.at_line_start() {
+                        self.newline();
+                    }
+                    self.indent = self.indent.saturating_sub(1);
+                    self.write_indent();
+                    self.output.push('}');
+                    if self.indent == 0 {
+                        if has_following_comment {
+                            self.pending_top_level_separator = true;
+                        } else {
+                            self.blank_line();
+                        }
+                    }
+                }
+            },
             ";" => {
                 self.trim_spaces();
                 self.output.push(';');
@@ -141,6 +203,16 @@ impl Formatter {
                     self.module_terminated = true;
                     if has_following_comment {
                         self.pending_top_level_separator = true;
+                    } else {
+                        self.blank_line();
+                    }
+                } else if self.indent == 0 && self.in_import {
+                    self.in_import = false;
+                    let another_import_follows = next_code_text == Some("import");
+                    if has_following_comment {
+                        self.pending_top_level_separator = !another_import_follows;
+                    } else if another_import_follows || next_code_text.is_none() {
+                        self.newline();
                     } else {
                         self.blank_line();
                     }

@@ -38,6 +38,10 @@ impl Parser<'_> {
         let mut children = Vec::new();
         children.push(SyntaxElement::Node(self.parse_module_decl()));
 
+        while self.at_text("import") {
+            children.push(SyntaxElement::Node(self.parse_import_decl()));
+        }
+
         while !self.at_eof() {
             if self.at_function_start() {
                 children.push(SyntaxElement::Node(self.parse_function_decl()));
@@ -60,6 +64,54 @@ impl Parser<'_> {
         children.push(SyntaxElement::Node(self.parse_qualified_name()));
         self.expect_text(";", &mut children);
         SyntaxNode::new(SyntaxKind::ModuleDecl, children)
+    }
+
+    fn parse_import_decl(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("import", &mut children);
+        children.push(SyntaxElement::Node(self.parse_import_path()));
+        if self.at_text("as") {
+            self.bump_expected(&mut children);
+            children.push(SyntaxElement::Node(self.parse_identifier()));
+        }
+        self.expect_text(";", &mut children);
+        SyntaxNode::new(SyntaxKind::ImportDecl, children)
+    }
+
+    fn parse_import_path(&mut self) -> SyntaxNode {
+        let mut children = vec![SyntaxElement::Node(self.parse_import_qualified_name())];
+        if self.at_text(".") && self.significant_token_is_followed_by("{") {
+            self.bump_expected(&mut children);
+            self.expect_text("{", &mut children);
+            children.push(SyntaxElement::Node(self.parse_import_item()));
+            while self.at_text(",") {
+                self.bump_expected(&mut children);
+                if self.at_text("}") || self.at_text(";") {
+                    break;
+                }
+                children.push(SyntaxElement::Node(self.parse_import_item()));
+            }
+            self.expect_text("}", &mut children);
+        }
+        SyntaxNode::new(SyntaxKind::ImportPath, children)
+    }
+
+    fn parse_import_qualified_name(&mut self) -> SyntaxNode {
+        let mut children = vec![SyntaxElement::Node(self.parse_identifier())];
+        while self.at_text(".") && !self.significant_token_is_followed_by("{") {
+            self.bump_expected(&mut children);
+            children.push(SyntaxElement::Node(self.parse_identifier()));
+        }
+        SyntaxNode::new(SyntaxKind::QualifiedName, children)
+    }
+
+    fn parse_import_item(&mut self) -> SyntaxNode {
+        let mut children = vec![SyntaxElement::Node(self.parse_identifier())];
+        if self.at_text("as") {
+            self.bump_expected(&mut children);
+            children.push(SyntaxElement::Node(self.parse_identifier()));
+        }
+        SyntaxNode::new(SyntaxKind::ImportItem, children)
     }
 
     fn parse_function_decl(&mut self) -> SyntaxNode {

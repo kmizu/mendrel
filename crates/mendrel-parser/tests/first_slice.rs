@@ -65,6 +65,89 @@ fn parses_the_first_slice_into_a_lossless_cst() {
 }
 
 #[test]
+fn parses_direct_grouped_and_aliased_imports_losslessly() {
+    let text = concat!(
+        "module demo.main;\n",
+        "import billing.money.Money;\n",
+        "import billing.tax.{TaxRate, calculate_tax as compute_tax,};\n",
+        "import billing.clock.Clock as BillingClock;\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("imports.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportDecl), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportPath), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportItem), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_import_semicolon_without_consuming_following_items() {
+    let text = concat!(
+        "module demo.main;\n",
+        "import billing.money.Money\n",
+        "import billing.clock.Clock;\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("missing-import-semicolon.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some(";"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let first_import =
+        find_kind(result.tree.root(), SyntaxKind::ImportDecl).expect("first import declaration");
+    assert!(contains_zero_width_token(first_import, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_grouped_import_brace_without_consuming_the_function() {
+    let text = concat!(
+        "module demo.main;\n",
+        "import billing.tax.{TaxRate, calculate_tax;\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("missing-import-brace.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("}"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportItem), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let import =
+        find_kind(result.tree.root(), SyntaxKind::ImportDecl).expect("grouped import declaration");
+    assert!(contains_zero_width_token(import, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn rejects_imports_after_top_level_declarations_without_losing_following_declarations() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn first(input: I32) -> I32 { input }\n",
+        "import billing.money.Money;\n",
+        "pub fn second(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("late-import.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::ImportDecl), 0);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn parses_nested_parenthesized_expressions_without_losing_source() {
     let text = concat!(
         "module demo.main;\n",
@@ -634,6 +717,15 @@ fn rejects_syntax_beyond_the_implemented_expression_subset() {
 fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
     for (production, expected_rule) in [
         ("module_decl", "\"module\", qualified_name, \";\""),
+        (
+            "import_decl",
+            "\"import\", import_path, [ \"as\", identifier ], \";\"",
+        ),
+        (
+            "import_path",
+            "qualified_name, [ \".\", \"{\", import_item, { \",\", import_item }, [ \",\" ], \"}\" ]",
+        ),
+        ("import_item", "identifier, [ \"as\", identifier ]"),
         ("qualified_name", "identifier, { \".\", identifier }"),
         ("function_decl", "function_head, [ contract_clause ], block"),
         ("block", "\"{\", { statement }, [ expression ], \"}\""),
