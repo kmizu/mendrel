@@ -1,178 +1,107 @@
-# Mendrel Design Pack
+# Mendrel
 
-> **Mendrel（メンドレル）** — *Make effects visible. Make change local. Make repair mechanical.*
+> **Make effects visible. Make change local. Make repair mechanical.**
 
-- Status: language and toolchain design draft 0.2
-- Date: 2026-08-18
-- Primary audience: compiler implementers, production platform engineers, coding agents, reviewers
-- Canonical source form: UTF-8 text files with extension `.mnd`
-- Reference compiler implementation language: Rust
-- Initial code-generation targets: LLVM native and WebAssembly Component Model
-- This pack is a design and implementation contract, not a claim that the language is already implemented.
+Mendrel is an experimental, statically typed programming language for software that must remain understandable and maintainable as it grows. It is designed for production services, command-line tools, data processing, and other long-lived systems built by humans and coding agents together.
 
-## 1. 名前
+Mendrel is currently in an early bootstrap stage. The repository contains an executable syntax frontend and a detailed language design, but it does not yet contain a type checker, runtime, or code generator. It is not ready for production use.
 
-**Mendrel** は、このプロジェクトで作った造語や。
+## Why Mendrel exists
 
-- **mend**: 壊れたものを直す、保守する
-- **rel**: relation / relevance / locality を連想させる短い語尾
-- 設計上の意味: 「依存関係を見えるようにし、修正範囲を局所化し、修復を機械的に検証できる言語」
+Writing a new function is often the easy part of software development. The difficult part is understanding what the function depends on, what authority it exercises, what can fail, which resources it owns, and what else may break when it changes.
 
-読みは「メンドレル」。CLI は `mendrel`、ソース拡張子は `.mnd` とする。
+Mendrel aims to reduce that maintenance burden. Its design focuses on three outcomes:
 
-2026-08-18 時点で一般的な検索による予備的な衝突確認はしたが、これは商標・法人名・パッケージレジストリ・ドメインの法的クリアランスではない。公開名称として確定する前に、対象地域を定めた正式な調査を行うこと。
+1. less context to understand before making a change;
+2. a smaller blast radius after making that change; and
+3. a shorter path from a failure to its cause and repair.
 
-## 2. 一文でいうと
+This is also what Mendrel means by being friendly to coding agents. The goal is not merely to use simple syntax or produce short programs. The goal is to make dependencies, constraints, and consequences explicit enough that both people and tools can reason about them reliably.
 
-Mendrel は、**管理メモリ、値指向データ、アフィンな資源、名前付き capability/effect row、構造化並行性、明示的な公開シグネチャ、再現可能ビルド、機械可読な意味 API** を一つの意味モデルで統合する、プロダクション向け静的型付き言語である。
+## The language in one minute
 
-狙いは「LLM が短いコードを書きやすい言語」ではない。狙いは次の三つを同時に小さくすることや。
+Mendrel brings several ideas into one semantic model:
 
-1. 変更前に理解しなければならない意味の範囲
-2. 変更後に壊れ得る範囲
-3. 壊れたときに原因へ戻るための探索量
+- **Explicit authority.** External access such as time, networking, databases, secrets, and process execution appears as named capabilities rather than ambient global state.
+- **Local reasoning.** Public declarations carry explicit contracts, while inference stays within declaration boundaries.
+- **Managed values and affine resources.** Ordinary application data uses managed memory. Resources whose identity and lifetime matter—such as files, sockets, locks, and transactions—are tracked separately.
+- **Structured concurrency.** Tasks belong to lexical scopes, with cancellation, deadlines, failure, and cleanup following the same lifetime structure.
+- **Canonical source.** Text remains the source of truth, with one canonical formatter and a lossless concrete syntax tree that preserves comments and recovery information.
+- **Structured feedback.** Diagnostics, semantic queries, and repair plans are intended to be stable, machine-readable, and revision-aware.
+- **Production semantics.** Reproducible builds, compatibility checks, observability, provenance, and deployment authority are part of the language and toolchain contract rather than unrelated add-ons.
 
-この三つを小さくすると、LLM の修正成功率だけでなく、人間のレビュー、障害対応、移行、監査も楽になる。
+The name *Mendrel* combines **mend** with a suffix suggesting relation, relevance, and locality: a language intended to make software easier to understand, change, and repair.
 
-## 3. 中核判断
+## A small Mendrel program
 
-### 3.1 通常の値は GC、希少資源だけアフィン
+The current bootstrap accepts a deliberately small language slice:
 
-通常のサービスコードへ全面的な所有権・借用証明を課さない。値と不変データは管理メモリ上に置く。一方、ファイル、ソケット、ロックガード、トランザクション、秘密の開示権のように「複製してはいけない」「確実に終了させたい」ものだけを `resource` としてアフィンに扱う。
+```mendrel
+module demo.main;
 
-### 3.2 外界への権限を capability と effect row にする
+pub fn add(left: I32, right: I32) -> I32 {
+    left + right
+}
+```
 
-時刻、乱数、環境変数、ファイル、ネットワーク、データベース、秘密、プロセス起動は ambient authority にしない。関数の `uses` 節へ名前付き capability として現す。これにより、依存、テスト差し替え、監査、影響解析が同じ情報から得られる。
+This example already passes through the lossless parser, syntax diagnostics, CST inspection, and canonical formatter. The broader language design includes algebraic data types, explicit errors, capabilities and effect rows, affine resources, contracts, and structured concurrency, but those features are not implemented yet.
 
-### 3.3 並行性は lexical scope に閉じる
+## Quick start
 
-通常のタスクは親スコープより長生きできない。取消、期限、失敗、観測コンテキストを親子で伝播する。切り離した常駐タスクは、明示的な `Supervisor` capability と lifecycle policy を通す。
-
-### 3.4 テキストを正本にし、意味操作をプロトコル化する
-
-AST やグラフ DB をソースの正本にしない。Git diff、コメント、レビュー、既存エディタとの相性を守るため、正本は canonical formatter を通したテキストにする。
-
-その代わり、コンパイラが lossless CST、型付き HIR、参照グラフ、効果グラフ、テスト影響グラフを保持し、**Mendrel Agent Protocol（MAP）** を通じて snapshot-aware な意味操作を提供する。LLM は生テキストの当てずっぽうな置換ではなく、rename、signature change、hole fill、API diff などをトランザクションとして要求できる。
-
-### 3.5 言語仕様と本番運用を分離しない
-
-`Result`、capability、deadline、wire schema、secret redaction、structured logging、reproducible build、SBOM、provenance、API compatibility は別々の追加ツールではない。同じ型情報と artifact graph から検査・生成する。
-
-## 4. 何を「LLM 向け」と呼ぶか
-
-Mendrel では、LLM 向けという言葉を次の測定可能な性質に限定する。
-
-- 宣言を単独で読んだとき、引数、戻り値、失敗、非同期性、外部権限が分かる
-- 同じ意味を持つ書き方が少なく、formatter が一つの形へ正規化する
-- 名前解決、型、effect、resource、task lifetime の誤りが安定した diagnostic code と原因グラフで返る
-- typed hole に対し、期待型、期待 effect、候補、必要な変換が返る
-- repository 全体をプロンプトへ詰め込まず、コンパイラが task-specific context bundle を作れる
-- 変更は revision hash 付きで preview され、影響する caller、test、API、wire schema、effect surface が分かる
-- release build は incomplete hole、未承認 `unsafe`、未検査 generator output、互換性違反を拒否する
-- benchmark で、修正ターン数、幻覚 symbol 数、回帰、レビュー時間を他言語と比較できる
-
-構文が英語っぽい、冗長である、AST を直接出力する、といった性質だけでは「LLM 向け」とは呼ばない。
-
-## 5. 想定する主戦場
-
-初期版の主戦場は次の範囲に絞る。
-
-- バックエンドサービス
-- CLI、バッチ、ジョブ
-- データ変換・ETL
-- 信頼境界を持つ WebAssembly component
-- 長期保守される業務ロジック
-- 人間と coding agent が共同で変更する中規模から大規模 repository
-
-v1 の主戦場にしないものは、ハードリアルタイム、極小組み込み、OS kernel、device driver、GPU kernel、既存 C++ ABI との無摩擦な置換、証明支援系そのものや。
-
-## 6. ドキュメント構成
-
-| ファイル | 役割 |
-|---|---|
-| `README.md` | 全体像、設計判断、読み方 |
-| `AGENTS.md` | Codex を含む coding agent が従う実装規律 |
-| `PROMPT_FOR_CODEX.md` | そのまま Codex に渡せる開始プロンプト |
-| `docs/00-executive-decision.md` | 代替案比較と最終決定 |
-| `docs/01-language-reference.md` | 表層構文・モジュール・式・宣言 |
-| `docs/02-types-effects-capabilities.md` | 型、推論、effect、capability、error、contract |
-| `docs/03-runtime-concurrency-memory.md` | メモリ、resource、async、task、supervision、FFI |
-| `docs/04-production-toolchain.md` | package、build、供給網、観測、DB、配備 |
-| `docs/05-agent-protocol.md` | MAP、diagnostic、typed hole、semantic edit |
-| `docs/06-compiler-architecture.md` | compiler/runtime の内部構造と single source of truth |
-| `docs/07-roadmap-and-acceptance.md` | 段階実装、各 phase の完了条件 |
-| `docs/08-conformance-and-benchmarks.md` | conformance、fuzz、MendrelBench |
-| `docs/09-adrs-risks-nongoals.md` | ADR、リスク、棄却案、機能採用基準 |
-| `docs/10-formal-kernel.md` | 最小核、判断形式、動的意味論、健全性義務 |
-| `docs/11-security-threat-model.md` | 脅威モデルと安全境界 |
-| `docs/12-references.md` | 参照した一次資料と採用・不採用点 |
-| `docs/13-derived-layers-and-lineage.md` | Onion/ASTER/Klassic/Macro PEG を core 外の公式 layer へ統合する設計 |
-| `spec/grammar.ebnf` | v0.1 の機械可読文法骨格 |
-| `schemas/diagnostic-v1.schema.json` | machine diagnostic の JSON Schema |
-| `schemas/map-v1.schema.json` | MAP envelope の JSON Schema |
-| `examples/checkout_service.mnd` | capability、error、deadline、resource の統合例 |
-| `examples/Mendrel.pkg` | 宣言的 package manifest の例 |
-| `examples/diagnostic.jsonl` | diagnostic schema に適合する具体例 |
-| `examples/map-request.json` | MAP schema に適合する request 例 |
-| `VALIDATION.md` | pack 自体へ実行した機械検査と既知の限界 |
-| `scripts/validate_pack.py` | manifest・EBNF・schema・example の bootstrap 前検査 |
-| `MANIFEST.md` | pack 内ファイルの SHA-256 と役割 |
-
-## 7. Codex へ渡す順序
-
-1. repository root にこの pack を配置し、`python scripts/validate_pack.py --strict-schema` を実行する。
-2. `PROMPT_FOR_CODEX.md` の内容を最初の指示として渡す。
-3. Codex に `README.md`、`AGENTS.md`、`docs/00`、`docs/06`、`docs/07` を先に読ませる。
-4. 最初の実装は Phase 0 と Phase 1 だけに限定する。
-5. parser、formatter、diagnostic JSON の golden test が安定するまで型検査へ進まない。
-6. 各 phase は一つの薄い垂直スライスとして完成させ、巨大な横断実装を避ける。
-7. 仕様と実装が衝突した場合、Codex は勝手に仕様を変えず、最小の ADR を提案する。
-
-## 8. 規範語
-
-この pack では、以下の語を規範的に使う。
-
-- **MUST / 必須**: 実装が満たさなければならない
-- **MUST NOT / 禁止**: 実装してはならない
-- **SHOULD / 推奨**: 強い理由がない限り従う
-- **MAY / 任意**: 互換性を壊さない範囲で実装してよい
-
-文書間で矛盾した場合の優先順位は次の通り。
-
-1. `docs/10-formal-kernel.md`
-2. `docs/01`〜`docs/05`
-3. `docs/11-security-threat-model.md`
-4. `docs/06`〜`docs/09`
-5. example と説明用コード
-
-矛盾を見つけた実装者は、暗黙にどちらかを選ばず ADR を追加する。
-
-## 9. 完成の定義
-
-Mendrel が「成功した」と呼べるのは、単に self-host したときではない。最低限、次を再現可能な benchmark と production trial で示したときや。
-
-- safe code に未定義動作がない
-- data race が型検査を通らない
-- function が宣言していない外部権限を使えない
-- child task が lexical scope から漏れない
-- debug/release で観測可能な意味が一致する
-- 同じ source、lockfile、compiler、target、declared inputs から同じ artifact が得られる
-- 公開 API、effect surface、wire schema の互換性違反を publish 前に分類できる
-- seeded maintenance task で、比較対象より少ない context と修正ターンで正しい patch へ到達する
-- 人間の reviewer が、通常の text diff と machine-generated blast-radius report を使って判断できる
-
-## 10. Bootstrap implementation
-
-Phase 0 と Phase 1 の最初の vertical slice は Rust workspace として実行できる。
+The repository pins its Rust toolchain through `rust-toolchain.toml`. With Rust and Git available:
 
 ```sh
-cargo run -p mendrelc -- --version
-cargo run -p mendrelc -- check crates/mendrel-parser/tests/fixtures/first_slice.mnd --error-format=json
-cargo run -p mendrelc -- cst crates/mendrel-parser/tests/fixtures/first_slice.mnd
+git clone https://github.com/kmizu/mendrel.git
+cd mendrel
+
+cargo run -p mendrel-cli -- --version
+cargo run -p mendrel-cli -- check crates/mendrel-parser/tests/fixtures/first_slice.mnd
+cargo run -p mendrel-cli -- cst crates/mendrel-parser/tests/fixtures/first_slice.mnd
 cargo run -p mendrel-cli -- fmt crates/mendrel-parser/tests/fixtures/first_slice.mnd
+```
+
+`check` currently validates only the implemented syntax slice. `fmt` writes canonical source to standard output and does not modify the input file.
+
+To run the complete repository verification:
+
+```sh
 cargo run -p xtask -- verify
 ```
 
-現在の parser subset は、一ファイルの `module` declaration と `pub fn` declaration に限定する。関数は一個以上の型注釈付き identifier parameter と明示 return type を持ち、body には identifier と二項 `+` だけからなる末尾式を一つ置く。qualified path、括弧、単項演算、`-`・`*`・`/`・`%`、空 parameter list / body、`internal`、visibility なし、`async`、`unsafe`、`move` parameter は、後続 slice の構文・意味規則を先取りせず `E-SYNTAX-UNSUPPORTED-0001` で拒否する。lexer は trivia、nested block comment、invalid token を保持し、parser は missing token と unsupported region を CST recovery element として残す。`fmt` は recovery のない CST だけを canonicalize し、malformed source を破壊的に書き換えない。
+The verification suite checks generated syntax data, formatting, lint cleanliness, workspace tests, and the consistency of the design pack.
 
-この bootstrap は AST/HIR、name/type/effect/resource checking、MIR、runtime、backend、package、MAP を実装しない。範囲外の top-level syntax は `E-SYNTAX-UNSUPPORTED-0001` で明示的に拒否する。
+## Current status
+
+Version `0.0.1` provides the first Phase 0/Phase 1 vertical slice:
+
+- UTF-8 source handling with byte-based spans and content revisions;
+- stable human-readable and JSONL diagnostics;
+- tokenization with preserved whitespace, comments, nested block comments, and invalid tokens;
+- an error-tolerant, lossless CST with explicit recovery elements;
+- canonical formatting for well-formed input;
+- explicit rejection of syntax outside the implemented subset; and
+- command-line entry points for syntax checking, CST inspection, formatting, and repository verification.
+
+The current implementation does **not** include name resolution, type or effect checking, HIR or MIR, evaluation, a runtime, native or WebAssembly code generation, package management, or the Mendrel Agent Protocol server.
+
+The next milestones are tracked in the [implementation roadmap](docs/07-roadmap-and-acceptance.md).
+
+## Intended use
+
+Mendrel is being designed primarily for:
+
+- backend services;
+- command-line tools, batch jobs, and data pipelines;
+- WebAssembly components at explicit trust boundaries;
+- long-lived business logic; and
+- medium-to-large repositories maintained by people and coding agents together.
+
+It is not intended to begin as a hard real-time language, an operating-system or device-driver language, a GPU language, a proof assistant, or a seamless replacement for existing C++ systems.
+
+## Design documents
+
+The README intentionally stays focused on what Mendrel is, why it exists, and how to try the current bootstrap. The normative language design begins with the [executive decision](docs/00-executive-decision.md) and the [language reference](docs/01-language-reference.md). Detailed compiler contracts, formal obligations, schemas, implementation boundaries, and validation notes remain in the internal design pack under [`docs/`](docs/).
+
+## License
+
+Mendrel is licensed under the Apache License 2.0.
