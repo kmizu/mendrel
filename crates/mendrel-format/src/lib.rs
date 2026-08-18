@@ -248,6 +248,7 @@ impl Formatter {
                         self.output.push('{');
                     }
                     BraceLayout::Block => {
+                        self.write_indent();
                         self.ensure_space();
                         self.output.push('{');
                         self.newline();

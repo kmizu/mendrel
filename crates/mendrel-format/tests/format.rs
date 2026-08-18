@@ -340,6 +340,38 @@ fn keeps_enum_variant_comments_attached_and_places_commas_first() {
 }
 
 #[test]
+fn indents_enum_payload_braces_after_an_intervening_comment() {
+    let input = concat!(
+        "module demo.main;",
+        "enum Commented{Payload /* payload fields */ {value:I32,},}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "enum Commented {\n",
+        "    Payload /* payload fields */\n",
+        "    {\n",
+        "        value: I32,\n",
+        "    },\n",
+        "}\n",
+    );
+    let parsed = parse_text("enum-payload-brace-comment.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented enum payload");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("enum-payload-brace-comment-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_record_field_comments_attached() {
     let input = concat!(
         "module demo.main;",

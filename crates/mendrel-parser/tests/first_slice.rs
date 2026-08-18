@@ -308,6 +308,29 @@ fn missing_enum_payload_boundary_does_not_consume_the_next_variant() {
 }
 
 #[test]
+fn missing_enum_payload_opening_brace_preserves_fields_and_following_variants() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First value: I32, }, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("missing-enum-payload-opening-brace.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("{"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn unsupported_enum_payload_type_does_not_consume_the_next_variant() {
     let text = concat!(
         "module demo.main;\n",
@@ -386,6 +409,172 @@ fn rejects_deferred_enum_header_syntax_without_cascading() {
         assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
         assert!(result.tree.has_recovery());
     }
+}
+
+#[test]
+fn unsupported_enum_variant_attribute_recovers_inside_the_enum() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Annotated { @tag(level: 1, nested: cfg.value()) First, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-enum-variant-attribute.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("@"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_enum_payload_field_attribute_recovers_inside_the_payload() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Annotated { First { @tag value: I32, }, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-enum-field-attribute.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("@"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_tuple_enum_payload_recovers_inside_the_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Unsupported { First(I32), Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-tuple-enum-payload.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_enum_body_region_recovers_before_the_next_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Unsupported { (I32), Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-enum-body-region.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_enum_payload_region_recovers_before_the_next_field() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Unsupported { First { (I32), value: Text, }, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-enum-payload-region.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unterminated_unsupported_enum_region_stops_at_the_enum_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { (I32, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unterminated-unsupported-enum-region.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unterminated_unsupported_payload_region_stops_at_the_payload_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { (I32, }, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source(
+        "unterminated-unsupported-enum-payload-region.mnd",
+        text,
+    ));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("("));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_kind(declaration, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
 }
 
 #[test]

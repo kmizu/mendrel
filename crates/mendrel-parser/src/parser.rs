@@ -39,6 +39,12 @@ enum RecordFieldContext {
     EnumPayload,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnumRecoveryContext {
+    Body,
+    Payload,
+}
+
 impl Parser<'_> {
     fn parse_source_file(mut self) -> ParseResult {
         let mut children = Vec::new();
@@ -202,10 +208,15 @@ impl Parser<'_> {
         let mut children = Vec::new();
         self.expect_text("{", &mut children);
         while !self.at_text("}") && !self.at_eof() && !self.at_top_level_decl_start() {
-            if !self.at_enum_variant_start() {
-                break;
+            if self.at_text("@") {
+                children.push(SyntaxElement::Node(self.recover_unsupported_attribute()));
+            } else if !self.at_enum_variant_start() {
+                children.push(SyntaxElement::Node(
+                    self.recover_unsupported_enum_region(EnumRecoveryContext::Body),
+                ));
+            } else {
+                children.push(SyntaxElement::Node(self.parse_enum_variant()));
             }
-            children.push(SyntaxElement::Node(self.parse_enum_variant()));
         }
         self.expect_text("}", &mut children);
         SyntaxNode::new(SyntaxKind::EnumBody, children)
@@ -213,18 +224,31 @@ impl Parser<'_> {
 
     fn parse_enum_variant(&mut self) -> SyntaxNode {
         let mut children = vec![SyntaxElement::Node(self.parse_identifier())];
-        if self.at_text("{") {
-            self.bump_expected(&mut children);
+        if self.at_text("{") || self.at_record_field_boundary() {
+            self.expect_text("{", &mut children);
             while !self.at_text("}")
                 && !self.at_eof()
                 && !self.at_enum_variant_boundary()
-                && self.at_record_field_start()
+                && !self.at_top_level_decl_start()
+                && !self.at_text(",")
             {
-                children.push(SyntaxElement::Node(
-                    self.parse_record_field(RecordFieldContext::EnumPayload),
-                ));
+                if self.at_text("@") {
+                    children.push(SyntaxElement::Node(self.recover_unsupported_attribute()));
+                } else if self.at_record_field_start() {
+                    children.push(SyntaxElement::Node(
+                        self.parse_record_field(RecordFieldContext::EnumPayload),
+                    ));
+                } else {
+                    children.push(SyntaxElement::Node(
+                        self.recover_unsupported_enum_region(EnumRecoveryContext::Payload),
+                    ));
+                }
             }
             self.expect_text("}", &mut children);
+        } else if self.at_text("(") {
+            children.push(SyntaxElement::Node(
+                self.recover_unsupported_tuple_enum_payload(),
+            ));
         }
         self.expect_text(",", &mut children);
         SyntaxNode::new(SyntaxKind::EnumVariant, children)
@@ -602,6 +626,145 @@ impl Parser<'_> {
                     "}" => brace_depth = brace_depth.saturating_sub(1),
                     _ => {}
                 }
+            }
+            self.bump(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn recover_unsupported_attribute(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("attribute recovery starts at an attribute")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "attributes are outside the implemented Phase 1 subset".to_owned(),
+            None,
+            Some(significant.text),
+        );
+        self.bump_expected(&mut children);
+        if self.at_identifier() {
+            self.bump_expected(&mut children);
+        }
+        if self.at_text("(") {
+            self.recover_balanced_parentheses(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn recover_unsupported_tuple_enum_payload(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("tuple enum payload recovery starts at an opening parenthesis")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "tuple-style enum payloads are outside the implemented Phase 1 subset".to_owned(),
+            None,
+            Some(significant.text),
+        );
+
+        self.recover_balanced_parentheses(&mut children);
+        SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn recover_balanced_parentheses(&mut self, children: &mut Vec<SyntaxElement>) {
+        self.take_trivia(children);
+        let mut depth = 0_u32;
+        while !self.at_eof() {
+            if depth > 0 && (self.at_text("}") || self.at_top_level_decl_start()) {
+                break;
+            }
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                if token.text == "(" {
+                    depth += 1;
+                } else if token.text == ")" {
+                    depth = depth.saturating_sub(1);
+                }
+            }
+            self.bump(children);
+            if depth == 0 {
+                break;
+            }
+        }
+    }
+
+    fn recover_unsupported_enum_region(&mut self, context: EnumRecoveryContext) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("enum-local recovery is not called at a boundary")
+            .clone();
+        let region = match context {
+            EnumRecoveryContext::Body => "enum body",
+            EnumRecoveryContext::Payload => "enum payload",
+        };
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            format!("{region} contains syntax outside the implemented Phase 1 subset"),
+            None,
+            Some(significant.text),
+        );
+
+        self.take_trivia(&mut children);
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        let mut angle_depth = 0_u32;
+        let mut consumed = false;
+        while !self.at_eof() {
+            if consumed && brace_depth == 0 && (self.at_text("}") || self.at_top_level_decl_start())
+            {
+                break;
+            }
+            let at_outer_boundary =
+                paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && angle_depth == 0;
+            if consumed && at_outer_boundary {
+                if self.at_text(",") {
+                    self.bump_expected(&mut children);
+                    break;
+                }
+                let at_context_boundary = match context {
+                    EnumRecoveryContext::Body => {
+                        self.at_text("}")
+                            || self.at_top_level_decl_start()
+                            || self.at_enum_variant_boundary()
+                            || self.at_text("{")
+                    }
+                    EnumRecoveryContext::Payload => {
+                        self.at_text("}")
+                            || self.at_top_level_decl_start()
+                            || self.at_enum_variant_boundary()
+                            || self.at_record_field_boundary()
+                    }
+                };
+                if at_context_boundary {
+                    break;
+                }
+            }
+
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                match token.text.as_str() {
+                    "(" => paren_depth += 1,
+                    ")" => paren_depth = paren_depth.saturating_sub(1),
+                    "[" => bracket_depth += 1,
+                    "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                    "{" => brace_depth += 1,
+                    "}" => brace_depth = brace_depth.saturating_sub(1),
+                    "<" => angle_depth += 1,
+                    ">" => angle_depth = angle_depth.saturating_sub(1),
+                    ">>" => angle_depth = angle_depth.saturating_sub(2),
+                    _ => {}
+                }
+                consumed = true;
             }
             self.bump(&mut children);
         }
