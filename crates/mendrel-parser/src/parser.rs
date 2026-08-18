@@ -598,15 +598,19 @@ impl Parser<'_> {
         let mut paren_depth = 0_u32;
         let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
+        let mut previous_significant_text: Option<String> = None;
         while !self.at_eof() {
             let at_outer_boundary =
                 angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            let starts_effect_row =
+                self.at_text("{") && previous_significant_text.as_deref() == Some("uses");
             if (brace_depth == 0 && self.at_text("}"))
                 || (at_outer_boundary
                     && (self.at_text(",")
                         || self.at_record_field_boundary()
                         || (context == RecordFieldContext::EnumPayload
-                            && self.at_enum_variant_boundary())
+                            && self.at_enum_variant_boundary()
+                            && !starts_effect_row)
                         || self.at_top_level_decl_start()))
             {
                 break;
@@ -626,6 +630,7 @@ impl Parser<'_> {
                     "}" => brace_depth = brace_depth.saturating_sub(1),
                     _ => {}
                 }
+                previous_significant_text = Some(token.text.clone());
             }
             self.bump(&mut children);
         }
@@ -855,6 +860,9 @@ impl Parser<'_> {
     }
 
     fn at_enum_variant_boundary(&self) -> bool {
+        if self.at_text("{") {
+            return true;
+        }
         if !self.at_identifier() {
             return false;
         }
@@ -862,7 +870,7 @@ impl Parser<'_> {
         let next = self.next_significant_index(current + 1);
         self.tokens
             .get(next)
-            .is_some_and(|token| matches!(token.text.as_str(), "," | "{"))
+            .is_some_and(|token| matches!(token.text.as_str(), "," | "{" | "("))
     }
 
     fn at_record_field_start(&self) -> bool {

@@ -482,6 +482,80 @@ fn unsupported_tuple_enum_payload_recovers_inside_the_variant() {
 }
 
 #[test]
+fn missing_payload_close_preserves_a_following_tuple_style_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { value: I32, Second(I32), Third, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source(
+        "missing-payload-close-before-tuple-variant.mnd",
+        text,
+    ));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == "E-SYNTAX-UNSUPPORTED-0001" && diagnostic.actual() == Some("(")
+    }));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_field_type_preserves_a_following_missing_name_payload_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { bad: Box<T> { value: I32, }, Third, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source(
+        "unsupported-type-before-missing-name-payload-variant.mnd",
+        text,
+    ));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == "E-SYNTAX-UNSUPPORTED-0001" && diagnostic.actual() == Some("<")
+    }));
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code() == "E-SYNTAX-MISSING-0001" && diagnostic.expected() == Some("identifier")
+    }));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn effect_row_braces_remain_part_of_an_unsupported_enum_payload_field_type() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { bad: fn(I32) -> I32 uses { io: Unit }, good: Text, }, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("effect-row-braces-in-enum-payload.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("fn"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn unsupported_enum_body_region_recovers_before_the_next_variant() {
     let text = concat!(
         "module demo.main;\n",
