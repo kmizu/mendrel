@@ -119,7 +119,7 @@ impl Formatter {
             self.ensure_space();
         }
         self.output.push_str(text);
-        if self.brace_layouts.last() == Some(&BraceLayout::Inline) {
+        if self.in_import {
             self.ensure_space();
             return;
         }

@@ -198,6 +198,37 @@ fn keeps_grouped_import_block_comments_inline() {
 }
 
 #[test]
+fn keeps_block_comments_around_grouped_import_braces_inline() {
+    let input = concat!(
+        "module demo.main;",
+        "import billing.tax./* before group */{TaxRate,}/* after group */;",
+        "pub fn value(input:I32)->I32{input}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "import billing.tax. /* before group */{TaxRate,} /* after group */;\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    input\n",
+        "}\n",
+    );
+    let parsed = parse_text("grouped-import-brace-comments.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid comments around grouped import braces");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("grouped-import-brace-comments-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_binary_operator_spacing_before_parenthesized_operands() {
     let cases = [
         ("left+(right)", "left + (right)"),
