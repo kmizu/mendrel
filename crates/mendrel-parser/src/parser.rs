@@ -33,6 +33,12 @@ struct Parser<'source> {
     diagnostics: Vec<Diagnostic>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordFieldContext {
+    Record,
+    EnumPayload,
+}
+
 impl Parser<'_> {
     fn parse_source_file(mut self) -> ParseResult {
         let mut children = Vec::new();
@@ -43,7 +49,9 @@ impl Parser<'_> {
         }
 
         while !self.at_eof() {
-            if self.at_record_start() {
+            if self.at_enum_start() {
+                children.push(SyntaxElement::Node(self.parse_enum_decl()));
+            } else if self.at_record_start() {
                 children.push(SyntaxElement::Node(self.parse_record_decl()));
             } else if self.at_function_start() {
                 children.push(SyntaxElement::Node(self.parse_function_decl()));
@@ -138,13 +146,15 @@ impl Parser<'_> {
             if !self.at_record_field_start() {
                 break;
             }
-            children.push(SyntaxElement::Node(self.parse_record_field()));
+            children.push(SyntaxElement::Node(
+                self.parse_record_field(RecordFieldContext::Record),
+            ));
         }
         self.expect_text("}", &mut children);
         SyntaxNode::new(SyntaxKind::RecordBody, children)
     }
 
-    fn parse_record_field(&mut self) -> SyntaxNode {
+    fn parse_record_field(&mut self, context: RecordFieldContext) -> SyntaxNode {
         let mut children = Vec::new();
         if self.at_visibility() {
             children.push(SyntaxElement::Node(self.parse_visibility()));
@@ -153,9 +163,9 @@ impl Parser<'_> {
         self.expect_text(":", &mut children);
         if self.at_type_start() {
             children.push(SyntaxElement::Node(self.parse_type()));
-            if self.at_unsupported_record_field_type_suffix() {
+            if self.at_unsupported_record_field_type_suffix(context) {
                 children.push(SyntaxElement::Node(
-                    self.recover_unsupported_record_field_type(),
+                    self.recover_unsupported_record_field_type(context),
                 ));
             }
         } else if self.at_text(",")
@@ -166,11 +176,58 @@ impl Parser<'_> {
             children.push(SyntaxElement::Node(self.parse_type()));
         } else {
             children.push(SyntaxElement::Node(
-                self.recover_unsupported_record_field_type(),
+                self.recover_unsupported_record_field_type(context),
             ));
         }
         self.expect_text(",", &mut children);
         SyntaxNode::new(SyntaxKind::RecordField, children)
+    }
+
+    fn parse_enum_decl(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        if self.at_visibility() {
+            children.push(SyntaxElement::Node(self.parse_visibility()));
+        }
+        self.expect_text("enum", &mut children);
+        children.push(SyntaxElement::Node(self.parse_identifier()));
+        if self.at_text("<") || self.at_text("where") {
+            children.push(SyntaxElement::Node(self.recover_top_level()));
+            return SyntaxNode::new(SyntaxKind::EnumDecl, children);
+        }
+        children.push(SyntaxElement::Node(self.parse_enum_body()));
+        SyntaxNode::new(SyntaxKind::EnumDecl, children)
+    }
+
+    fn parse_enum_body(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("{", &mut children);
+        while !self.at_text("}") && !self.at_eof() && !self.at_top_level_decl_start() {
+            if !self.at_enum_variant_start() {
+                break;
+            }
+            children.push(SyntaxElement::Node(self.parse_enum_variant()));
+        }
+        self.expect_text("}", &mut children);
+        SyntaxNode::new(SyntaxKind::EnumBody, children)
+    }
+
+    fn parse_enum_variant(&mut self) -> SyntaxNode {
+        let mut children = vec![SyntaxElement::Node(self.parse_identifier())];
+        if self.at_text("{") {
+            self.bump_expected(&mut children);
+            while !self.at_text("}")
+                && !self.at_eof()
+                && !self.at_enum_variant_boundary()
+                && self.at_record_field_start()
+            {
+                children.push(SyntaxElement::Node(
+                    self.parse_record_field(RecordFieldContext::EnumPayload),
+                ));
+            }
+            self.expect_text("}", &mut children);
+        }
+        self.expect_text(",", &mut children);
+        SyntaxNode::new(SyntaxKind::EnumVariant, children)
     }
 
     fn parse_visibility(&mut self) -> SyntaxNode {
@@ -498,7 +555,7 @@ impl Parser<'_> {
         SyntaxNode::new(SyntaxKind::Error, children)
     }
 
-    fn recover_unsupported_record_field_type(&mut self) -> SyntaxNode {
+    fn recover_unsupported_record_field_type(&mut self, context: RecordFieldContext) -> SyntaxNode {
         let mut children = Vec::new();
         let significant = self
             .current_significant()
@@ -524,6 +581,8 @@ impl Parser<'_> {
                 || (at_outer_boundary
                     && (self.at_text(",")
                         || self.at_record_field_boundary()
+                        || (context == RecordFieldContext::EnumPayload
+                            && self.at_enum_variant_boundary())
                         || self.at_top_level_decl_start()))
             {
                 break;
@@ -610,8 +669,37 @@ impl Parser<'_> {
             .is_some_and(|token| token.text == "record")
     }
 
+    fn at_enum_start(&self) -> bool {
+        if self.at_text("enum") {
+            return true;
+        }
+        if !self.at_visibility() {
+            return false;
+        }
+        let current = self.significant_index();
+        let next = self.next_significant_index(current + 1);
+        self.tokens
+            .get(next)
+            .is_some_and(|token| token.text == "enum")
+    }
+
     fn at_top_level_decl_start(&self) -> bool {
-        self.at_record_start() || self.at_function_start()
+        self.at_enum_start() || self.at_record_start() || self.at_function_start()
+    }
+
+    fn at_enum_variant_start(&self) -> bool {
+        self.at_identifier() || self.at_text("{") || self.at_text(",")
+    }
+
+    fn at_enum_variant_boundary(&self) -> bool {
+        if !self.at_identifier() {
+            return false;
+        }
+        let current = self.significant_index();
+        let next = self.next_significant_index(current + 1);
+        self.tokens
+            .get(next)
+            .is_some_and(|token| matches!(token.text.as_str(), "," | "{"))
     }
 
     fn at_record_field_start(&self) -> bool {
@@ -666,12 +754,13 @@ impl Parser<'_> {
         self.at_identifier() || self.at_text("Self")
     }
 
-    fn at_unsupported_record_field_type_suffix(&self) -> bool {
-        !self.at_text(",")
-            && !self.at_text("}")
-            && !self.at_eof()
-            && !self.at_top_level_decl_start()
-            && !self.at_record_field_start()
+    fn at_unsupported_record_field_type_suffix(&self, context: RecordFieldContext) -> bool {
+        !(self.at_text(",")
+            || self.at_text("}")
+            || self.at_eof()
+            || self.at_top_level_decl_start()
+            || self.at_record_field_start()
+            || (context == RecordFieldContext::EnumPayload && self.at_enum_variant_boundary()))
     }
 
     fn top_level_error_token(&self) -> Option<&Token> {

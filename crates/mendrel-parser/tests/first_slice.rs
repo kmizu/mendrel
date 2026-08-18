@@ -208,6 +208,306 @@ fn parses_self_typed_record_fields_without_stalling() {
 }
 
 #[test]
+fn parses_visible_enum_declarations_and_payload_fields_losslessly() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub enum PaymentState {\n",
+        "    Pending,\n",
+        "    Authorized { authorization_id: AuthorizationId, },\n",
+        "    Declined { internal decline_reason: DeclineReason, },\n",
+        "}\n",
+        "enum Empty {}\n",
+        "record Marker {}\n",
+        "pub fn value(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("enums.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumDecl), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumBody), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Visibility), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn inserts_a_missing_enum_variant_name_without_losing_following_variants() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { , Good, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("missing-enum-variant-name.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("identifier"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+    assert!(contains_zero_width_token(declaration, TokenKind::Missing));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn missing_enum_payload_variant_name_preserves_its_fields_and_following_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { { value: I32, }, Good, }\n",
+        "record Intact {}\n",
+    );
+    let result = parse(&source("missing-enum-payload-variant-name.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+    assert_eq!(result.diagnostics[0].expected(), Some("identifier"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn missing_enum_payload_boundary_does_not_consume_the_next_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { value: I32, Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("missing-enum-payload-boundary.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.expected()))
+            .collect::<Vec<_>>(),
+        [
+            ("E-SYNTAX-MISSING-0001", Some("}")),
+            ("E-SYNTAX-MISSING-0001", Some(",")),
+        ],
+        "{:#?}",
+        result.diagnostics,
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_enum_payload_type_does_not_consume_the_next_variant() {
+    let text = concat!(
+        "module demo.main;\n",
+        "enum Broken { First { bad: Box<T> Second, }\n",
+        "record Intact {}\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unsupported-enum-payload-type.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.code(), diagnostic.expected()))
+            .collect::<Vec<_>>(),
+        [
+            ("E-SYNTAX-UNSUPPORTED-0001", None),
+            ("E-SYNTAX-MISSING-0001", Some(",")),
+            ("E-SYNTAX-MISSING-0001", Some("}")),
+            ("E-SYNTAX-MISSING-0001", Some(",")),
+        ],
+        "{:#?}",
+        result.diagnostics,
+    );
+    assert_eq!(result.diagnostics[0].actual(), Some("<"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn rejects_deferred_enum_header_syntax_without_cascading() {
+    let cases = [
+        (
+            "enum-generics.mnd",
+            concat!(
+                "module demo.main;\n",
+                "pub enum Box<T> { Value { value: T, }, }\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "<",
+        ),
+        (
+            "enum-where.mnd",
+            concat!(
+                "module demo.main;\n",
+                "enum Ordered where { T: Ord } { Value, }\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "where",
+        ),
+    ];
+
+    for (path, text, actual) in cases {
+        let result = parse(&source(path, text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumDecl), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+        assert!(contains_kind(declaration, SyntaxKind::Error));
+        assert!(!contains_zero_width_token(declaration, TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn malformed_enum_boundaries_recover_locally() {
+    let cases = [
+        (
+            "missing-enum-name.mnd",
+            concat!(
+                "module demo.main;\n",
+                "enum { First, }\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "identifier",
+            1,
+        ),
+        (
+            "missing-enum-body-open.mnd",
+            concat!(
+                "module demo.main;\n",
+                "enum Broken First, }\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "{",
+            1,
+        ),
+        (
+            "missing-enum-variant-comma.mnd",
+            concat!(
+                "module demo.main;\n",
+                "enum Broken { First Second, }\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            ",",
+            2,
+        ),
+        (
+            "missing-enum-body-close.mnd",
+            concat!(
+                "module demo.main;\n",
+                "enum Broken { First,\n",
+                "record Intact {}\n",
+                "pub fn intact(input: I32) -> I32 { input }\n",
+            ),
+            "}",
+            1,
+        ),
+    ];
+
+    for (path, text, expected, variant_count) in cases {
+        let result = parse(&source(path, text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[0].expected(), Some(expected));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::EnumVariant),
+            variant_count,
+            "variant loss for {path}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+        assert!(contains_zero_width_token(declaration, TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn malformed_enum_payload_fields_recover_locally() {
+    let cases = [
+        (
+            "missing-enum-field-name.mnd",
+            "enum Broken { First { : I32, good: Text, }, Second, }",
+            "identifier",
+        ),
+        (
+            "missing-enum-field-type.mnd",
+            "enum Broken { First { missing: , good: Text, }, Second, }",
+            "type",
+        ),
+        (
+            "missing-enum-field-comma.mnd",
+            "enum Broken { First { first: I32 second: I32, }, Second, }",
+            ",",
+        ),
+    ];
+
+    for (path, declaration, expected) in cases {
+        let text = format!(
+            "module demo.main;\n{declaration}\nrecord Intact {{}}\npub fn intact(input: I32) -> I32 {{ input }}\n"
+        );
+        let result = parse(&source(path, &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {path}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{path}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[0].expected(), Some(expected));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::EnumVariant), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordField), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::RecordDecl), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 1);
+        let declaration = find_kind(result.tree.root(), SyntaxKind::EnumDecl).expect("enum");
+        assert!(contains_zero_width_token(declaration, TokenKind::Missing));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn rejects_deferred_record_header_syntax_without_cascading() {
     let cases = [
         (
@@ -1033,6 +1333,15 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
         (
             "record_field",
             "attributes, [ visibility ], identifier, \":\", type, \",\"",
+        ),
+        (
+            "enum_decl",
+            "[ visibility ], \"enum\", identifier, [ generic_params ], [ where_clause ], enum_body",
+        ),
+        ("enum_body", "\"{\", { enum_variant }, \"}\""),
+        (
+            "enum_variant",
+            "attributes, identifier, [ \"{\", { record_field }, \"}\" ], \",\"",
         ),
         ("function_decl", "function_head, [ contract_clause ], block"),
         ("block", "\"{\", { statement }, [ expression ], \"}\""),

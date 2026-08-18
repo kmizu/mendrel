@@ -48,7 +48,7 @@ pub fn format(tree: &SyntaxTree) -> Result<String, FormatError> {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct TokenContext {
-    in_record_field: bool,
+    comma_ends_line: bool,
 }
 
 fn token_contexts(root: &SyntaxNode) -> Vec<TokenContext> {
@@ -59,7 +59,7 @@ fn token_contexts(root: &SyntaxNode) -> Vec<TokenContext> {
 
 fn collect_token_contexts(node: &SyntaxNode, contexts: &mut Vec<TokenContext>) {
     let context = TokenContext {
-        in_record_field: node.kind == SyntaxKind::RecordField,
+        comma_ends_line: matches!(node.kind, SyntaxKind::RecordField | SyntaxKind::EnumVariant),
     };
     for child in &node.children {
         match child {
@@ -73,12 +73,12 @@ fn canonical_token_order(tokens: &[&Token], contexts: &[TokenContext]) -> Vec<us
     let mut order = Vec::with_capacity(tokens.len());
     let mut cursor = 0;
     while cursor < tokens.len() {
-        if tokens[cursor].kind.is_trivia() && contexts[cursor].in_record_field {
+        if tokens[cursor].kind.is_trivia() && contexts[cursor].comma_ends_line {
             let trivia_start = cursor;
             let mut has_comment = false;
             while cursor < tokens.len()
                 && tokens[cursor].kind.is_trivia()
-                && contexts[cursor].in_record_field
+                && contexts[cursor].comma_ends_line
             {
                 has_comment |= matches!(
                     tokens[cursor].kind,
@@ -90,7 +90,7 @@ fn canonical_token_order(tokens: &[&Token], contexts: &[TokenContext]) -> Vec<us
                 && tokens.get(cursor).is_some_and(|token| token.text == ",")
                 && contexts
                     .get(cursor)
-                    .is_some_and(|context| context.in_record_field)
+                    .is_some_and(|context| context.comma_ends_line)
             {
                 order.push(cursor);
                 order.extend(trivia_start..cursor);
@@ -303,7 +303,7 @@ impl Formatter {
             "," => {
                 self.trim_spaces();
                 self.output.push(',');
-                if context.in_record_field {
+                if context.comma_ends_line {
                     if !has_following_comment {
                         self.newline();
                     }

@@ -267,6 +267,79 @@ fn formats_record_fields_without_changing_structure() {
 }
 
 #[test]
+fn formats_enum_variants_and_payload_fields_without_changing_structure() {
+    let input = concat!(
+        "module demo.main;",
+        "pub enum PaymentState{Pending,Authorized{authorization_id:AuthorizationId,},",
+        "Declined{internal decline_reason:DeclineReason,},}",
+        "enum Empty{}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub enum PaymentState {\n",
+        "    Pending,\n",
+        "    Authorized {\n",
+        "        authorization_id: AuthorizationId,\n",
+        "    },\n",
+        "    Declined {\n",
+        "        internal decline_reason: DeclineReason,\n",
+        "    },\n",
+        "}\n\n",
+        "enum Empty {\n",
+        "}\n",
+    );
+    let parsed = parse_text("enum-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid enums");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("enum-format-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
+fn keeps_enum_variant_comments_attached_and_places_commas_first() {
+    let input = concat!(
+        "module demo.main;",
+        "enum Commented{First // line comment\n",
+        ",Second /* block comment */ ,Payload{value:I32,},}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "enum Commented {\n",
+        "    First, // line comment\n",
+        "    Second, /* block comment */\n",
+        "    Payload {\n",
+        "        value: I32,\n",
+        "    },\n",
+        "}\n",
+    );
+    let parsed = parse_text("enum-comments.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid commented enum");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("enum-comments-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn keeps_record_field_comments_attached() {
     let input = concat!(
         "module demo.main;",
