@@ -359,14 +359,14 @@ impl Parser<'_> {
                     "the implemented Phase 1 subset requires a trailing expression",
                 )));
             }
-        } else if !self.at_eof() {
+        } else if !self.at_eof() && !self.at_top_level_decl_start() {
             if self.at_expression_start() {
                 children.push(SyntaxElement::Node(self.parse_expression()));
             } else {
                 children.push(SyntaxElement::Node(self.recover_block_tail()));
             }
         }
-        if !self.at_text("}") && !self.at_eof() {
+        if !self.at_text("}") && !self.at_eof() && !self.at_top_level_decl_start() {
             children.push(SyntaxElement::Node(self.recover_block_tail()));
         }
         self.expect_text("}", &mut children);
@@ -386,11 +386,28 @@ impl Parser<'_> {
         let mut children = Vec::new();
         self.expect_text("return", &mut children);
         if self.at_expression_start() || self.at_text("-") {
-            children.push(SyntaxElement::Node(self.parse_expression()));
+            let expression_cursor = self.cursor;
+            let diagnostic_count = self.diagnostics.len();
+            let expression = self.parse_expression();
             if !self.at_return_expression_boundary() && !self.at_expression_start() {
-                children.push(SyntaxElement::Node(
-                    self.recover_unsupported_return_expression(),
-                ));
+                if self.diagnostics.len() > diagnostic_count {
+                    let significant = self
+                        .current_significant()
+                        .expect("unsupported return expression recovery is not called at EOF")
+                        .clone();
+                    self.cursor = expression_cursor;
+                    self.diagnostics.truncate(diagnostic_count);
+                    children.push(SyntaxElement::Node(
+                        self.recover_unsupported_return_expression_at(significant),
+                    ));
+                } else {
+                    children.push(SyntaxElement::Node(expression));
+                    children.push(SyntaxElement::Node(
+                        self.recover_unsupported_return_expression(),
+                    ));
+                }
+            } else {
+                children.push(SyntaxElement::Node(expression));
             }
         } else if !self.at_return_expression_boundary() {
             children.push(SyntaxElement::Node(
@@ -402,11 +419,15 @@ impl Parser<'_> {
     }
 
     fn recover_unsupported_return_expression(&mut self) -> SyntaxNode {
-        let mut children = Vec::new();
         let significant = self
             .current_significant()
             .expect("unsupported return expression recovery is not called at EOF")
             .clone();
+        self.recover_unsupported_return_expression_at(significant)
+    }
+
+    fn recover_unsupported_return_expression_at(&mut self, significant: Token) -> SyntaxNode {
+        let mut children = Vec::new();
         self.push_diagnostic(
             &UNSUPPORTED_SYNTAX,
             significant.span,
@@ -422,9 +443,17 @@ impl Parser<'_> {
         let mut consumed = false;
         while !self.at_eof() {
             let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            let at_statement_semicolon = self.at_text(";")
+                && (at_outer_boundary
+                    || (brace_depth == 0
+                        && !self.return_delimiters_close_before_block_boundary(
+                            paren_depth,
+                            bracket_depth,
+                        )));
             if consumed
-                && ((at_outer_boundary && (self.at_text(";") || self.at_statement_start()))
-                    || self.at_top_level_decl_start()
+                && (at_statement_semicolon
+                    || (at_outer_boundary
+                        && (self.at_statement_start() || self.at_top_level_decl_start()))
                     || (brace_depth == 0 && self.at_text("}")))
             {
                 break;
@@ -446,6 +475,38 @@ impl Parser<'_> {
             self.bump(&mut children);
         }
         SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn return_delimiters_close_before_block_boundary(
+        &self,
+        mut paren_depth: u32,
+        mut bracket_depth: u32,
+    ) -> bool {
+        let mut brace_depth = 0_u32;
+        let mut index = self.next_significant_index(self.significant_index() + 1);
+        loop {
+            let Some(token) = self.tokens.get(index) else {
+                return false;
+            };
+            if token.kind == TokenKind::Eof {
+                return false;
+            }
+
+            match token.text.as_str() {
+                "(" => paren_depth += 1,
+                ")" => paren_depth = paren_depth.saturating_sub(1),
+                "[" => bracket_depth += 1,
+                "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                "{" => brace_depth += 1,
+                "}" if brace_depth == 0 => return false,
+                "}" => brace_depth -= 1,
+                _ => {}
+            }
+            if paren_depth == 0 && bracket_depth == 0 {
+                return true;
+            }
+            index = self.next_significant_index(index + 1);
+        }
     }
 
     fn parse_let_statement(&mut self) -> SyntaxNode {
