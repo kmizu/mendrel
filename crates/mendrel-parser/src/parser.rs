@@ -457,6 +457,7 @@ impl Parser<'_> {
         let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
         let mut consumed = false;
+        let mut previous_significant_index = None;
         let mut previous_requires_expression_continuation: Option<bool> = None;
         while !self.at_eof() {
             let significant_index = self.significant_index();
@@ -472,11 +473,14 @@ impl Parser<'_> {
                             bracket_depth,
                             brace_depth,
                         ) == ReturnDelimiterLookahead::NoClose));
-            let line_separated_expression =
-                previous_requires_expression_continuation.is_some_and(|requires_continuation| {
-                    !requires_continuation
-                        && self.has_line_break_before(significant_index)
-                        && self.at_expression_start()
+            let line_separated_expression = previous_significant_index
+                .zip(previous_requires_expression_continuation)
+                .is_some_and(|(previous, requires_continuation)| {
+                    self.is_line_separated_return_boundary(
+                        previous,
+                        requires_continuation,
+                        significant_index,
+                    )
                 });
             let delimiter_layer_stays_unclosed = !at_outer_boundary
                 && self.return_delimiter_lookahead(
@@ -500,6 +504,7 @@ impl Parser<'_> {
 
             let token = self.tokens[self.cursor].clone();
             if !token.kind.is_trivia() {
+                previous_significant_index = Some(self.cursor);
                 previous_requires_expression_continuation = Some(
                     Self::token_requires_expression_continuation(&token, angle_depth),
                 );
@@ -541,6 +546,37 @@ impl Parser<'_> {
             .any(|(index, part)| index % 2 == 1 && part == literal)
     }
 
+    fn is_line_separated_return_boundary(
+        &self,
+        previous_index: usize,
+        previous_requires_expression_continuation: bool,
+        current_index: usize,
+    ) -> bool {
+        let current_starts_call_suffix = self
+            .tokens
+            .get(current_index)
+            .is_some_and(|token| token.text == "(")
+            && self.token_at_ends_postfix_expression(previous_index);
+        !previous_requires_expression_continuation
+            && !current_starts_call_suffix
+            && self.tokens[previous_index + 1..current_index]
+                .iter()
+                .any(|trivia| trivia.text.contains(['\n', '\r']))
+            && self.token_at_starts_expression(current_index)
+    }
+
+    fn token_at_ends_postfix_expression(&self, index: usize) -> bool {
+        self.tokens.get(index).is_some_and(|token| {
+            matches!(
+                token.kind,
+                TokenKind::Integer | TokenKind::String | TokenKind::Identifier
+            ) || matches!(
+                token.text.as_str(),
+                "true" | "false" | "Unit" | "None" | ")" | "]" | "}" | ">" | ">>" | "?"
+            )
+        })
+    }
+
     fn return_semicolon_precedes_competing_boundary(&self, start_index: usize) -> bool {
         let mut angle_depth = 0_u32;
         let mut paren_depth = 0_u32;
@@ -562,11 +598,11 @@ impl Parser<'_> {
             if let Some(previous) = previous_significant_index {
                 let line_separated_expression = previous_requires_expression_continuation
                     .is_some_and(|requires_continuation| {
-                        !requires_continuation
-                            && self.tokens[previous + 1..index]
-                                .iter()
-                                .any(|trivia| trivia.text.contains(['\n', '\r']))
-                            && self.token_at_starts_expression(index)
+                        self.is_line_separated_return_boundary(
+                            previous,
+                            requires_continuation,
+                            index,
+                        )
                     });
                 let delimiter_layer_stays_unclosed = at_outer_boundary
                     || self.return_delimiter_lookahead(
@@ -726,12 +762,6 @@ impl Parser<'_> {
             }
             index = self.next_significant_index(index + 1);
         }
-    }
-
-    fn has_line_break_before(&self, significant_index: usize) -> bool {
-        self.tokens[self.cursor..significant_index]
-            .iter()
-            .any(|token| token.text.contains(['\n', '\r']))
     }
 
     fn parse_let_statement(&mut self) -> SyntaxNode {

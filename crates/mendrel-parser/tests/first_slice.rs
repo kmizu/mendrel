@@ -1743,6 +1743,67 @@ fn adjacent_return_expression_suffixes_recover_through_their_semicolons() {
 }
 
 #[test]
+fn multiline_call_suffixes_stay_inside_return_recovery() {
+    for (case, return_expression, actual, expression_count) in [
+        (
+            "supported-prefix",
+            "input value\n        (input)",
+            "value",
+            3,
+        ),
+        (
+            "unsupported-start",
+            "while value\n        (input)",
+            "while",
+            2,
+        ),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            return_expression,
+        );
+        let result = parse(&source(
+            &format!("multiline-call-return-recovery-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn unsupported_return_expression_start_recovers_before_following_statements() {
     let text = concat!(
         "module demo.main;\n",
