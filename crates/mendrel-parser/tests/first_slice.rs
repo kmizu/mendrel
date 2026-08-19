@@ -1804,6 +1804,98 @@ fn multiline_call_suffixes_stay_inside_return_recovery() {
 }
 
 #[test]
+fn multiline_unsupported_groups_with_semicolons_stay_inside_return_recovery() {
+    for (case, return_expression, expression_count) in [
+        ("supported-prefix", "input while\n        (input)", 3),
+        ("unsupported-start", "while\n        (input)", 2),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            return_expression,
+        );
+        let result = parse(&source(
+            &format!("multiline-unsupported-return-group-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some("while"));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn multiline_group_without_a_return_semicolon_remains_the_block_tail() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return @\n",
+        "        (input)\n",
+        "}\n",
+    );
+    let result = parse(&source(
+        "missing-return-semicolon-before-group-tail.mnd",
+        text,
+    ));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code())
+            .collect::<Vec<_>>(),
+        ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+        "{:#?}",
+        result.diagnostics,
+    );
+    assert_eq!(result.diagnostics[0].actual(), Some("@"));
+    assert_eq!(result.diagnostics[1].expected(), Some(";"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 1);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+    assert!(contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
 fn unsupported_return_expression_start_recovers_before_following_statements() {
     let text = concat!(
         "module demo.main;\n",

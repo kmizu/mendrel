@@ -481,7 +481,8 @@ impl Parser<'_> {
                         requires_continuation,
                         significant_index,
                     )
-                });
+                })
+                && !self.return_semicolon_precedes_competing_boundary(significant_index);
             let delimiter_layer_stays_unclosed = !at_outer_boundary
                 && self.return_delimiter_lookahead(
                     significant_index,
