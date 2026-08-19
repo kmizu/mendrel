@@ -1944,6 +1944,108 @@ fn unsupported_return_expression_keeps_semicolons_inside_balanced_delimiters() {
 }
 
 #[test]
+fn unsupported_return_suffix_tracks_balanced_angle_delimiters() {
+    for (case, expression) in [
+        ("keyword", "input::<return>"),
+        ("nested", "input::<Outer<return>>"),
+        ("semicolon", "input::<value; value>"),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression,
+        );
+        let result = parse(&source(&format!("balanced-angle-return-{case}.mnd"), &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some("::"));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        let return_statement =
+            find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+        assert!(contains_kind(return_statement, SyntaxKind::Error));
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn unterminated_return_angle_delimiters_resynchronize_before_following_block_elements() {
+    let cases = [
+        ("before-let", "let next = input; next", 2, 1, 1, 3),
+        ("before-return", "return input;", 2, 2, 0, 2),
+        ("before-tail", "next", 1, 1, 0, 2),
+    ];
+
+    for (case, following, statement_count, return_count, let_count, expression_count) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return input::<value; {}\n",
+                "}}\n",
+            ),
+            following,
+        );
+        let result = parse(&source(
+            &format!("unterminated-angle-return-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some("::"));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Statement),
+            statement_count,
+            "statement loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            return_count,
+            "return loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::LetStatement),
+            let_count,
+            "let loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn unsupported_return_punctuation_recovers_without_cascading() {
     let text = concat!(
         "module demo.main;\n",
@@ -1969,6 +2071,43 @@ fn unsupported_return_punctuation_recovers_without_cascading() {
         TokenKind::Missing
     ));
     assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn lexer_invalid_tokens_inside_returns_do_not_gain_parser_diagnostics() {
+    for (case, expression) in [("start", "\t"), ("call-argument", "call(\t)")] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression,
+        );
+        let result = parse(&source(&format!("invalid-return-{case}.mnd"), &text));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-INVALID-0001");
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        let return_statement =
+            find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+        assert!(contains_kind(return_statement, SyntaxKind::Error));
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
 }
 
 #[test]

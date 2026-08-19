@@ -428,25 +428,30 @@ impl Parser<'_> {
 
     fn recover_unsupported_return_expression_at(&mut self, significant: Token) -> SyntaxNode {
         let mut children = Vec::new();
-        self.push_diagnostic(
-            &UNSUPPORTED_SYNTAX,
-            significant.span,
-            "return expression is outside the implemented Phase 1 subset".to_owned(),
-            None,
-            Some(significant.text),
-        );
+        if significant.kind != TokenKind::Invalid {
+            self.push_diagnostic(
+                &UNSUPPORTED_SYNTAX,
+                significant.span,
+                "return expression is outside the implemented Phase 1 subset".to_owned(),
+                None,
+                Some(significant.text),
+            );
+        }
 
         self.take_trivia(&mut children);
+        let mut angle_depth = 0_u32;
         let mut paren_depth = 0_u32;
         let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
         let mut consumed = false;
         while !self.at_eof() {
-            let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            let at_outer_boundary =
+                angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
             let at_statement_semicolon = self.at_text(";")
                 && (at_outer_boundary
                     || (brace_depth == 0
                         && !self.return_delimiters_close_before_block_boundary(
+                            angle_depth,
                             paren_depth,
                             bracket_depth,
                         )));
@@ -462,6 +467,9 @@ impl Parser<'_> {
             let token = self.tokens[self.cursor].clone();
             if !token.kind.is_trivia() {
                 match token.text.as_str() {
+                    "<" => angle_depth += 1,
+                    ">" => angle_depth = angle_depth.saturating_sub(1),
+                    ">>" => angle_depth = angle_depth.saturating_sub(2),
                     "(" => paren_depth += 1,
                     ")" => paren_depth = paren_depth.saturating_sub(1),
                     "[" => bracket_depth += 1,
@@ -479,6 +487,7 @@ impl Parser<'_> {
 
     fn return_delimiters_close_before_block_boundary(
         &self,
+        mut angle_depth: u32,
         mut paren_depth: u32,
         mut bracket_depth: u32,
     ) -> bool {
@@ -493,6 +502,9 @@ impl Parser<'_> {
             }
 
             match token.text.as_str() {
+                "<" => angle_depth += 1,
+                ">" => angle_depth = angle_depth.saturating_sub(1),
+                ">>" => angle_depth = angle_depth.saturating_sub(2),
                 "(" => paren_depth += 1,
                 ")" => paren_depth = paren_depth.saturating_sub(1),
                 "[" => bracket_depth += 1,
@@ -502,7 +514,7 @@ impl Parser<'_> {
                 "}" => brace_depth -= 1,
                 _ => {}
             }
-            if paren_depth == 0 && bracket_depth == 0 {
+            if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 {
                 return true;
             }
             index = self.next_significant_index(index + 1);
