@@ -458,23 +458,20 @@ impl Parser<'_> {
                             bracket_depth,
                             brace_depth,
                         )));
-            let at_unclosed_delimiter_boundary = !at_outer_boundary
-                && (self.at_statement_start()
-                    || self.at_top_level_decl_start()
-                    || (self.has_line_break_before(significant_index)
-                        && self.at_expression_start()))
-                && !self.return_delimiters_close_before_block_boundary(
-                    significant_index,
-                    angle_depth,
-                    paren_depth,
-                    bracket_depth,
-                    brace_depth,
-                );
+            let at_recovery_boundary = (self.at_statement_start()
+                || self.at_top_level_decl_start()
+                || (self.has_line_break_before(significant_index) && self.at_expression_start()))
+                && (at_outer_boundary
+                    || !self.return_delimiters_close_before_block_boundary(
+                        significant_index,
+                        angle_depth,
+                        paren_depth,
+                        bracket_depth,
+                        brace_depth,
+                    ));
             if consumed
                 && (at_statement_semicolon
-                    || at_unclosed_delimiter_boundary
-                    || (at_outer_boundary
-                        && (self.at_statement_start() || self.at_top_level_decl_start()))
+                    || at_recovery_boundary
                     || (brace_depth == 0 && self.at_text("}")))
             {
                 break;

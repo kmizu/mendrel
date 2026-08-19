@@ -2325,6 +2325,66 @@ fn lexer_invalid_tokens_inside_returns_do_not_gain_parser_diagnostics() {
 }
 
 #[test]
+fn unsupported_returns_without_semicolons_preserve_line_separated_tails() {
+    let cases = [
+        ("unsupported-suffix", "input.member", 2, 1),
+        ("unsupported-keyword", "while input", 1, 0),
+        ("unsupported-punctuation", "@ value", 1, 0),
+    ];
+
+    for (case, return_expression, expression_count, return_expression_count) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "    next\n",
+                "}}\n",
+            ),
+            return_expression,
+        );
+        let result = parse(&source(
+            &format!("missing-unsupported-return-semicolon-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            2,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[1].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[1].expected(), Some(";"));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 1);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "tail expression loss for {case}",
+        );
+        let return_statement =
+            find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+        assert_eq!(
+            count_kind(return_statement, SyntaxKind::Expression),
+            return_expression_count,
+            "return expression mismatch for {case}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn missing_return_semicolon_preserves_following_block_elements() {
     let cases = [
         ("before-return", "return input return;", 2, 2, 0, 1),
