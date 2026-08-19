@@ -1918,23 +1918,51 @@ fn unterminated_return_delimiters_resynchronize_before_following_block_elements(
 #[test]
 fn unterminated_return_delimiters_keep_line_separated_operands_before_their_semicolons() {
     let cases = [
-        ("paren", "while(", "while", 2),
-        ("angle", "input::<", "::", 3),
-        ("bracket", "while[", "while", 2),
+        ("paren", "while(", "input", "while", 2),
+        ("angle", "input::<", "input", "::", 3),
+        ("bracket", "while[", "input", "while", 2),
+        (
+            "paren-continuation",
+            "while(",
+            "input +\n        value",
+            "while",
+            2,
+        ),
+        (
+            "angle-continuation",
+            "input::<",
+            "input +\n        value",
+            "::",
+            3,
+        ),
+        (
+            "bracket-continuation",
+            "while[",
+            "input +\n        value",
+            "while",
+            2,
+        ),
+        (
+            "nested-call-comma-continuation",
+            "while(call(",
+            "input,\n        value",
+            "while",
+            2,
+        ),
     ];
 
-    for (case, expression_start, actual, expression_count) in cases {
+    for (case, expression_start, operand, actual, expression_count) in cases {
         let text = format!(
             concat!(
                 "module demo.main;\n",
                 "pub fn value(input: I32) -> I32 {{\n",
                 "    return {}\n",
-                "        input;\n",
+                "        {};\n",
                 "    let next = input;\n",
                 "    next\n",
                 "}}\n",
             ),
-            expression_start,
+            expression_start, operand,
         );
         let result = parse(&source(
             &format!("unterminated-return-before-operand-{case}.mnd"),
@@ -1963,6 +1991,60 @@ fn unterminated_return_delimiters_keep_line_separated_operands_before_their_semi
         );
         assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
         assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn semicolons_inside_balanced_inner_return_delimiters_do_not_end_the_return() {
+    let cases = [
+        ("paren", "while(call(input; input)", "while"),
+        ("angle", "while<call<input; input>", "while"),
+        ("bracket", "while[call[input; input]", "while"),
+    ];
+
+    for (case, expression, actual) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression,
+        );
+        let result = parse(&source(
+            &format!("balanced-inner-return-semicolon-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code())
+                .collect::<Vec<_>>(),
+            ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+            "{case}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(result.diagnostics[1].expected(), Some(";"));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(contains_zero_width_token(
             result.tree.root(),
             TokenKind::Missing
         ));
@@ -2170,6 +2252,16 @@ fn unterminated_return_delimiters_without_semicolons_preserve_following_block_el
         (
             "paren-before-tail",
             "while(input",
+            "next",
+            "while",
+            1,
+            1,
+            0,
+            1,
+        ),
+        (
+            "multiline-paren-before-tail",
+            "while(\n        input",
             "next",
             "while",
             1,

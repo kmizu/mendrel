@@ -45,6 +45,13 @@ enum EnumRecoveryContext {
     Payload,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReturnDelimiterLookahead {
+    AllClose,
+    LayerCloses,
+    NoClose,
+}
+
 impl Parser<'_> {
     fn parse_source_file(mut self) -> ParseResult {
         let mut children = Vec::new();
@@ -444,6 +451,7 @@ impl Parser<'_> {
         let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
         let mut consumed = false;
+        let mut previous_significant_index = None;
         while !self.at_eof() {
             let significant_index = self.significant_index();
             let at_outer_boundary =
@@ -451,36 +459,30 @@ impl Parser<'_> {
             let at_statement_semicolon = self.at_text(";")
                 && (at_outer_boundary
                     || (brace_depth == 0
-                        && !self.return_delimiters_close_before_block_boundary(
+                        && self.return_delimiter_lookahead(
                             significant_index + 1,
                             angle_depth,
                             paren_depth,
                             bracket_depth,
                             brace_depth,
-                        )));
-            let line_separated_expression =
-                self.has_line_break_before(significant_index) && self.at_expression_start();
-            let delimiters_stay_unclosed = !at_outer_boundary
-                && !self.return_delimiters_close_before_block_boundary(
+                        ) == ReturnDelimiterLookahead::NoClose));
+            let line_separated_expression = previous_significant_index.is_some_and(|previous| {
+                !self.token_at_requires_expression_continuation(previous)
+                    && self.has_line_break_before(significant_index)
+                    && self.at_expression_start()
+            });
+            let delimiter_layer_stays_unclosed = !at_outer_boundary
+                && self.return_delimiter_lookahead(
                     significant_index,
                     angle_depth,
                     paren_depth,
                     bracket_depth,
                     brace_depth,
-                );
-            let at_recovery_boundary = ((self.at_statement_start()
-                || self.at_top_level_decl_start())
-                && (at_outer_boundary || delimiters_stay_unclosed))
-                || (line_separated_expression
-                    && (at_outer_boundary
-                        || (delimiters_stay_unclosed
-                            && !self.return_statement_semicolon_precedes_nested_boundary(
-                                significant_index,
-                                angle_depth,
-                                paren_depth,
-                                bracket_depth,
-                                brace_depth,
-                            ))));
+                ) == ReturnDelimiterLookahead::NoClose;
+            let at_recovery_boundary = (self.at_statement_start()
+                || self.at_top_level_decl_start()
+                || line_separated_expression)
+                && (at_outer_boundary || delimiter_layer_stays_unclosed);
             if consumed
                 && (at_statement_semicolon
                     || at_recovery_boundary
@@ -504,155 +506,88 @@ impl Parser<'_> {
                     _ => {}
                 }
                 consumed = true;
+                previous_significant_index = Some(self.cursor);
             }
             self.bump(&mut children);
         }
         SyntaxNode::new(SyntaxKind::Error, children)
     }
 
-    fn return_statement_semicolon_precedes_nested_boundary(
-        &self,
-        start_index: usize,
-        mut angle_depth: u32,
-        mut paren_depth: u32,
-        mut bracket_depth: u32,
-        mut brace_depth: u32,
-    ) -> bool {
-        let mut index = self.next_significant_index(start_index);
-        let mut previous_index = None;
-        loop {
-            let Some(token) = self.tokens.get(index) else {
-                return false;
-            };
-            if token.kind == TokenKind::Eof {
-                return false;
-            }
-
-            let at_outer_boundary =
-                angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
-            if let Some(previous) = previous_index {
-                let line_separated_expression = self.tokens[previous + 1..index]
-                    .iter()
-                    .any(|trivia| trivia.text.contains(['\n', '\r']))
-                    && self.token_at_starts_expression(index);
-                let competing_boundary = self.token_at_starts_statement(index)
-                    || self.token_at_starts_top_level_decl(index)
-                    || line_separated_expression;
-                if competing_boundary
-                    && (at_outer_boundary
-                        || !self.return_delimiters_close_before_block_boundary(
-                            index,
-                            angle_depth,
-                            paren_depth,
-                            bracket_depth,
-                            brace_depth,
-                        ))
-                {
-                    return false;
-                }
-            }
-
-            if token.text == ";"
-                && (at_outer_boundary
-                    || (brace_depth == 0
-                        && !self.return_delimiters_close_before_block_boundary(
-                            index + 1,
-                            angle_depth,
-                            paren_depth,
-                            bracket_depth,
-                            brace_depth,
-                        )))
-            {
-                return true;
-            }
-            if brace_depth == 0 && token.text == "}" {
-                return false;
-            }
-
-            match token.text.as_str() {
-                "<" => angle_depth += 1,
-                ">" => angle_depth = angle_depth.saturating_sub(1),
-                ">>" => angle_depth = angle_depth.saturating_sub(2),
-                "(" => paren_depth += 1,
-                ")" => paren_depth = paren_depth.saturating_sub(1),
-                "[" => bracket_depth += 1,
-                "]" => bracket_depth = bracket_depth.saturating_sub(1),
-                "{" => brace_depth += 1,
-                "}" => brace_depth = brace_depth.saturating_sub(1),
-                _ => {}
-            }
-            previous_index = Some(index);
-            index = self.next_significant_index(index + 1);
-        }
-    }
-
-    fn token_at_starts_statement(&self, index: usize) -> bool {
-        self.tokens
-            .get(index)
-            .is_some_and(|token| matches!(token.text.as_str(), "let" | "return"))
-    }
-
-    fn token_at_starts_top_level_decl(&self, index: usize) -> bool {
-        let Some(token) = self.tokens.get(index) else {
-            return false;
-        };
-        if matches!(token.text.as_str(), "record" | "enum") {
-            return true;
-        }
-        if !matches!(token.text.as_str(), "pub" | "internal") {
-            return false;
-        }
-        let next = self.next_significant_index(index + 1);
-        self.tokens.get(next).is_some_and(|next_token| {
-            matches!(next_token.text.as_str(), "record" | "enum")
-                || (token.text == "pub" && next_token.text == "fn")
-        })
-    }
-
-    fn token_at_starts_expression(&self, index: usize) -> bool {
+    fn token_at_requires_expression_continuation(&self, index: usize) -> bool {
         self.tokens.get(index).is_some_and(|token| {
             matches!(
-                token.kind,
-                TokenKind::Integer | TokenKind::String | TokenKind::Identifier
-            ) || matches!(
                 token.text.as_str(),
-                "true" | "false" | "Unit" | "None" | "("
+                "+" | "-" | "*" | "/" | "%" | "." | "::" | "," | ":" | "=" | "(" | "[" | "{" | "<"
             )
         })
     }
 
-    fn return_delimiters_close_before_block_boundary(
+    fn return_delimiter_lookahead(
         &self,
         start_index: usize,
         mut angle_depth: u32,
         mut paren_depth: u32,
         mut bracket_depth: u32,
         mut brace_depth: u32,
-    ) -> bool {
+    ) -> ReturnDelimiterLookahead {
+        let initial_angle_depth = angle_depth;
+        let initial_paren_depth = paren_depth;
+        let initial_bracket_depth = bracket_depth;
+        let initial_brace_depth = brace_depth;
+        let mut layer_closes = false;
         let mut index = self.next_significant_index(start_index);
         loop {
             let Some(token) = self.tokens.get(index) else {
-                return false;
+                return if layer_closes {
+                    ReturnDelimiterLookahead::LayerCloses
+                } else {
+                    ReturnDelimiterLookahead::NoClose
+                };
             };
             if token.kind == TokenKind::Eof {
-                return false;
+                return if layer_closes {
+                    ReturnDelimiterLookahead::LayerCloses
+                } else {
+                    ReturnDelimiterLookahead::NoClose
+                };
             }
 
             match token.text.as_str() {
                 "<" => angle_depth += 1,
-                ">" => angle_depth = angle_depth.saturating_sub(1),
-                ">>" => angle_depth = angle_depth.saturating_sub(2),
+                ">" => {
+                    angle_depth = angle_depth.saturating_sub(1);
+                    layer_closes |= angle_depth < initial_angle_depth;
+                }
+                ">>" => {
+                    angle_depth = angle_depth.saturating_sub(2);
+                    layer_closes |= angle_depth < initial_angle_depth;
+                }
                 "(" => paren_depth += 1,
-                ")" => paren_depth = paren_depth.saturating_sub(1),
+                ")" => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                    layer_closes |= paren_depth < initial_paren_depth;
+                }
                 "[" => bracket_depth += 1,
-                "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                "]" => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                    layer_closes |= bracket_depth < initial_bracket_depth;
+                }
                 "{" => brace_depth += 1,
-                "}" if brace_depth == 0 => return false,
-                "}" => brace_depth -= 1,
+                "}" if brace_depth == 0 => {
+                    return if layer_closes {
+                        ReturnDelimiterLookahead::LayerCloses
+                    } else {
+                        ReturnDelimiterLookahead::NoClose
+                    };
+                }
+                "}" => {
+                    brace_depth -= 1;
+                    layer_closes |= brace_depth < initial_brace_depth;
+                }
                 _ => {}
             }
             if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                return true;
+                return ReturnDelimiterLookahead::AllClose;
             }
             index = self.next_significant_index(index + 1);
         }
