@@ -349,7 +349,7 @@ impl Parser<'_> {
         let mut children = Vec::new();
         self.expect_text("{", &mut children);
         let mut has_statement = false;
-        while self.at_text("let") {
+        while self.at_statement_start() {
             children.push(SyntaxElement::Node(self.parse_statement()));
             has_statement = true;
         }
@@ -374,10 +374,78 @@ impl Parser<'_> {
     }
 
     fn parse_statement(&mut self) -> SyntaxNode {
-        SyntaxNode::new(
-            SyntaxKind::Statement,
-            vec![SyntaxElement::Node(self.parse_let_statement())],
-        )
+        let statement = if self.at_text("return") {
+            self.parse_return_statement()
+        } else {
+            self.parse_let_statement()
+        };
+        SyntaxNode::new(SyntaxKind::Statement, vec![SyntaxElement::Node(statement)])
+    }
+
+    fn parse_return_statement(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        self.expect_text("return", &mut children);
+        if self.at_expression_start() || self.at_text("-") {
+            children.push(SyntaxElement::Node(self.parse_expression()));
+            if !self.at_return_expression_boundary() && !self.at_expression_start() {
+                children.push(SyntaxElement::Node(
+                    self.recover_unsupported_return_expression(),
+                ));
+            }
+        } else if !self.at_return_expression_boundary() {
+            children.push(SyntaxElement::Node(
+                self.recover_unsupported_return_expression(),
+            ));
+        }
+        self.expect_text(";", &mut children);
+        SyntaxNode::new(SyntaxKind::ReturnStatement, children)
+    }
+
+    fn recover_unsupported_return_expression(&mut self) -> SyntaxNode {
+        let mut children = Vec::new();
+        let significant = self
+            .current_significant()
+            .expect("unsupported return expression recovery is not called at EOF")
+            .clone();
+        self.push_diagnostic(
+            &UNSUPPORTED_SYNTAX,
+            significant.span,
+            "return expression is outside the implemented Phase 1 subset".to_owned(),
+            None,
+            Some(significant.text),
+        );
+
+        self.take_trivia(&mut children);
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        let mut consumed = false;
+        while !self.at_eof() {
+            let at_outer_boundary = paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if consumed
+                && ((at_outer_boundary && (self.at_text(";") || self.at_statement_start()))
+                    || self.at_top_level_decl_start()
+                    || (brace_depth == 0 && self.at_text("}")))
+            {
+                break;
+            }
+
+            let token = self.tokens[self.cursor].clone();
+            if !token.kind.is_trivia() {
+                match token.text.as_str() {
+                    "(" => paren_depth += 1,
+                    ")" => paren_depth = paren_depth.saturating_sub(1),
+                    "[" => bracket_depth += 1,
+                    "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                    "{" => brace_depth += 1,
+                    "}" => brace_depth = brace_depth.saturating_sub(1),
+                    _ => {}
+                }
+                consumed = true;
+            }
+            self.bump(&mut children);
+        }
+        SyntaxNode::new(SyntaxKind::Error, children)
     }
 
     fn parse_let_statement(&mut self) -> SyntaxNode {
@@ -1081,6 +1149,18 @@ impl Parser<'_> {
 
     fn at_type_start(&self) -> bool {
         self.at_identifier() || self.at_text("Self")
+    }
+
+    fn at_statement_start(&self) -> bool {
+        self.at_text("let") || self.at_text("return")
+    }
+
+    fn at_return_expression_boundary(&self) -> bool {
+        self.at_text(";")
+            || self.at_text("}")
+            || self.at_eof()
+            || self.at_statement_start()
+            || self.at_top_level_decl_start()
     }
 
     fn at_let_type_boundary(&self) -> bool {

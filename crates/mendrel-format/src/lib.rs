@@ -61,7 +61,7 @@ fn collect_token_contexts(node: &SyntaxNode, contexts: &mut Vec<TokenContext>) {
     let context = TokenContext {
         line_ending_delimiter: match node.kind {
             SyntaxKind::RecordField | SyntaxKind::EnumVariant => Some(","),
-            SyntaxKind::LetStatement => Some(";"),
+            SyntaxKind::LetStatement | SyntaxKind::ReturnStatement => Some(";"),
             _ => None,
         },
     };

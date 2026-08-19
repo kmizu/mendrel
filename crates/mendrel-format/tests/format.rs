@@ -133,6 +133,38 @@ fn formats_let_statements_and_keeps_preceding_comments_attached() {
 }
 
 #[test]
+fn formats_return_statements_and_keeps_preceding_comments_attached() {
+    let input = concat!(
+        "module demo.main;",
+        "pub fn value(input:I32)->I32{",
+        "return input /* keep */;",
+        "return;}",
+    );
+    let expected = concat!(
+        "module demo.main;\n\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return input; /* keep */\n",
+        "    return;\n",
+        "}\n",
+    );
+    let parsed = parse_text("return-format.mnd", input);
+    assert!(parsed.diagnostics.is_empty(), "{:#?}", parsed.diagnostics);
+
+    let before = parsed.tree.structural_fingerprint();
+    let formatted = format(&parsed.tree).expect("valid return statements");
+    assert_eq!(formatted, expected);
+
+    let reparsed = parse_text("return-format-formatted.mnd", &formatted);
+    assert!(
+        reparsed.diagnostics.is_empty(),
+        "{:#?}",
+        reparsed.diagnostics
+    );
+    assert_eq!(reparsed.tree.structural_fingerprint(), before);
+    assert_eq!(format(&reparsed.tree).expect("reparsed tree"), formatted);
+}
+
+#[test]
 fn formats_imports_without_changing_structure() {
     let input = concat!(
         "module demo.main;",

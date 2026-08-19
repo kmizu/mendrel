@@ -1409,7 +1409,7 @@ fn unsupported_top_level_syntax_becomes_an_error_node() {
 fn block_recovery_stops_at_the_real_closing_brace() {
     let text = concat!(
         "module demo.main;\n",
-        "pub fn broken(value: I32) -> I32 { return value; }\n",
+        "pub fn broken(value: I32) -> I32 { while value { value } }\n",
         "pub fn intact(value: I32) -> I32 { value }\n",
     );
     let result = parse(&source("block-recovery.mnd", text));
@@ -1538,6 +1538,306 @@ fn rejects_move_parameters_without_resource_semantics() {
     assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
     assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
     assert!(contains_kind(result.tree.root(), SyntaxKind::Error));
+}
+
+#[test]
+fn parses_return_statements_with_and_without_values() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn with_value(input: I32) -> I32 {\n",
+        "    return input;\n",
+        "}\n",
+        "pub fn without_value(input: I32) -> I32 {\n",
+        "    return;\n",
+        "}\n",
+    );
+    let result = parse(&source("return-statements.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        2
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 1);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn parses_let_and_return_statements_in_source_order_before_a_tail_expression() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    let first = input;\n",
+        "    return first;\n",
+        "    let last = input;\n",
+        "    last\n",
+        "}\n",
+    );
+    let result = parse(&source("mixed-statements.mnd", text));
+
+    assert!(result.diagnostics.is_empty(), "{:#?}", result.diagnostics);
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 3);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 4);
+    assert!(!result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_return_expression_recovers_before_following_statements() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return -input;\n",
+        "    let next = input;\n",
+        "    next\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-return-expression.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("-"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_return_expression_suffix_recovers_before_following_statements() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return input.member;\n",
+        "    let next = input;\n",
+        "    next\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-return-expression-suffix.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("."));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Expression));
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_return_expression_start_recovers_before_following_statements() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return while input;\n",
+        "    let next = input;\n",
+        "    next\n",
+        "}\n",
+    );
+    let result = parse(&source("unsupported-return-expression-start.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("while"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unsupported_return_expression_ignores_statement_keywords_inside_delimiters() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return while(return);\n",
+        "    let next = input;\n",
+        "    next\n",
+        "}\n",
+    );
+    let result = parse(&source("nested-unsupported-return-expression.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("while"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn unterminated_unsupported_return_expression_stops_at_the_block_boundary() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn broken(input: I32) -> I32 { return while(input; }\n",
+        "pub fn intact(input: I32) -> I32 { input }\n",
+    );
+    let result = parse(&source("unterminated-return-expression.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 2, "{:#?}", result.diagnostics);
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code())
+            .collect::<Vec<_>>(),
+        ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+    );
+    assert_eq!(result.diagnostics[0].actual(), Some("while"));
+    assert_eq!(result.diagnostics[1].expected(), Some(";"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::FunctionDecl), 2);
+    assert_eq!(
+        count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+        1
+    );
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn invalid_return_expression_does_not_duplicate_the_lexer_diagnostic() {
+    let text = concat!(
+        "module demo.main;\n",
+        "pub fn value(input: I32) -> I32 {\n",
+        "    return @;\n",
+        "    let next = input;\n",
+        "    next\n",
+        "}\n",
+    );
+    let result = parse(&source("invalid-return-expression.mnd", text));
+
+    assert_eq!(result.tree.source_text(), text);
+    assert_eq!(result.diagnostics.len(), 1, "{:#?}", result.diagnostics);
+    assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+    assert_eq!(result.diagnostics[0].actual(), Some("@"));
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+    assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+    let return_statement =
+        find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+    assert!(contains_kind(return_statement, SyntaxKind::Error));
+    assert!(!contains_zero_width_token(
+        result.tree.root(),
+        TokenKind::Missing
+    ));
+    assert!(result.tree.has_recovery());
+}
+
+#[test]
+fn missing_return_semicolon_preserves_following_block_elements() {
+    let cases = [
+        ("before-return", "return input return;", 2, 2, 0, 1),
+        (
+            "before-let",
+            "return input let next = input; next",
+            2,
+            1,
+            1,
+            3,
+        ),
+        ("before-tail", "return input next", 1, 1, 0, 2),
+        ("before-close", "return input", 1, 1, 0, 1),
+    ];
+
+    for (case, body, statement_count, return_count, let_count, expression_count) in cases {
+        let text = format!("module demo.main;\npub fn value(input: I32) -> I32 {{ {body} }}\n");
+        let result = parse(&source(
+            &format!("missing-return-semicolon-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-MISSING-0001");
+        assert_eq!(result.diagnostics[0].expected(), Some(";"));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Statement),
+            statement_count,
+            "statement loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            return_count,
+            "return loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::LetStatement),
+            let_count,
+            "let loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert!(contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(!contains_kind(result.tree.root(), SyntaxKind::Error));
+        assert!(result.tree.has_recovery());
+    }
 }
 
 #[test]
@@ -1902,6 +2202,7 @@ fn implemented_production_shapes_are_pinned_to_the_normative_grammar() {
             "let_statement",
             "\"let\", pattern, [ \":\", type ], \"=\", expression, \";\"",
         ),
+        ("return_statement", "\"return\", [ expression ], \";\""),
         (
             "pattern",
             "wildcard_pattern | literal_pattern | binding_pattern | variant_pattern | record_pattern | tuple_pattern | list_pattern",
