@@ -399,7 +399,10 @@ impl Parser<'_> {
             let expression_cursor = self.cursor;
             let diagnostic_count = self.diagnostics.len();
             let expression = self.parse_expression();
-            if !self.at_return_expression_boundary() && !self.at_expression_start() {
+            let recover_suffix = !self.at_return_expression_boundary()
+                && (!self.at_expression_start()
+                    || self.return_semicolon_precedes_competing_boundary(self.significant_index()));
+            if recover_suffix {
                 if self.diagnostics.len() > diagnostic_count {
                     let significant = self
                         .current_significant()
@@ -536,6 +539,122 @@ impl Parser<'_> {
         rule.split('"')
             .enumerate()
             .any(|(index, part)| index % 2 == 1 && part == literal)
+    }
+
+    fn return_semicolon_precedes_competing_boundary(&self, start_index: usize) -> bool {
+        let mut angle_depth = 0_u32;
+        let mut paren_depth = 0_u32;
+        let mut bracket_depth = 0_u32;
+        let mut brace_depth = 0_u32;
+        let mut previous_significant_index = None;
+        let mut previous_requires_expression_continuation: Option<bool> = None;
+        let mut index = self.next_significant_index(start_index);
+        loop {
+            let Some(token) = self.tokens.get(index) else {
+                return false;
+            };
+            if token.kind == TokenKind::Eof {
+                return false;
+            }
+
+            let at_outer_boundary =
+                angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if let Some(previous) = previous_significant_index {
+                let line_separated_expression = previous_requires_expression_continuation
+                    .is_some_and(|requires_continuation| {
+                        !requires_continuation
+                            && self.tokens[previous + 1..index]
+                                .iter()
+                                .any(|trivia| trivia.text.contains(['\n', '\r']))
+                            && self.token_at_starts_expression(index)
+                    });
+                let delimiter_layer_stays_unclosed = at_outer_boundary
+                    || self.return_delimiter_lookahead(
+                        index,
+                        angle_depth,
+                        paren_depth,
+                        bracket_depth,
+                        brace_depth,
+                    ) == ReturnDelimiterLookahead::NoClose;
+                if (self.token_at_starts_statement(index)
+                    || self.token_at_starts_top_level_decl(index)
+                    || line_separated_expression)
+                    && delimiter_layer_stays_unclosed
+                {
+                    return false;
+                }
+            }
+
+            if token.text == ";"
+                && (at_outer_boundary
+                    || (brace_depth == 0
+                        && self.return_delimiter_lookahead(
+                            index + 1,
+                            angle_depth,
+                            paren_depth,
+                            bracket_depth,
+                            brace_depth,
+                        ) == ReturnDelimiterLookahead::NoClose))
+            {
+                return true;
+            }
+            if brace_depth == 0 && token.text == "}" {
+                return false;
+            }
+
+            previous_requires_expression_continuation = Some(
+                Self::token_requires_expression_continuation(token, angle_depth),
+            );
+            match token.text.as_str() {
+                "<" => angle_depth += 1,
+                ">" => angle_depth = angle_depth.saturating_sub(1),
+                ">>" => angle_depth = angle_depth.saturating_sub(2),
+                "(" => paren_depth += 1,
+                ")" => paren_depth = paren_depth.saturating_sub(1),
+                "[" => bracket_depth += 1,
+                "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                "{" => brace_depth += 1,
+                "}" => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            previous_significant_index = Some(index);
+            index = self.next_significant_index(index + 1);
+        }
+    }
+
+    fn token_at_starts_statement(&self, index: usize) -> bool {
+        self.tokens
+            .get(index)
+            .is_some_and(|token| matches!(token.text.as_str(), "let" | "return"))
+    }
+
+    fn token_at_starts_top_level_decl(&self, index: usize) -> bool {
+        let Some(token) = self.tokens.get(index) else {
+            return false;
+        };
+        if matches!(token.text.as_str(), "record" | "enum") {
+            return true;
+        }
+        if !matches!(token.text.as_str(), "pub" | "internal") {
+            return false;
+        }
+        let next = self.next_significant_index(index + 1);
+        self.tokens.get(next).is_some_and(|next_token| {
+            matches!(next_token.text.as_str(), "record" | "enum")
+                || (token.text == "pub" && next_token.text == "fn")
+        })
+    }
+
+    fn token_at_starts_expression(&self, index: usize) -> bool {
+        self.tokens.get(index).is_some_and(|token| {
+            matches!(
+                token.kind,
+                TokenKind::Integer | TokenKind::String | TokenKind::Identifier
+            ) || matches!(
+                token.text.as_str(),
+                "true" | "false" | "Unit" | "None" | "("
+            )
+        })
     }
 
     fn return_delimiter_lookahead(
@@ -1245,7 +1364,7 @@ impl Parser<'_> {
     }
 
     fn at_top_level_decl_start(&self) -> bool {
-        self.at_enum_start() || self.at_record_start() || self.at_function_start()
+        self.token_at_starts_top_level_decl(self.significant_index())
     }
 
     fn at_enum_variant_start(&self) -> bool {
@@ -1319,7 +1438,7 @@ impl Parser<'_> {
     }
 
     fn at_statement_start(&self) -> bool {
-        self.at_text("let") || self.at_text("return")
+        self.token_at_starts_statement(self.significant_index())
     }
 
     fn at_return_expression_boundary(&self) -> bool {
@@ -1405,7 +1524,7 @@ impl Parser<'_> {
     }
 
     fn at_expression_start(&self) -> bool {
-        self.at_literal() || self.at_identifier() || self.at_text("(")
+        self.token_at_starts_expression(self.significant_index())
     }
 
     fn at_literal(&self) -> bool {

@@ -1699,6 +1699,50 @@ fn unsupported_tokens_inside_return_expressions_recover_without_cascading() {
 }
 
 #[test]
+fn adjacent_return_expression_suffixes_recover_through_their_semicolons() {
+    for (case, suffix, actual) in [("identifier", "value", "value"), ("literal", "42", "42")] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return input {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            suffix,
+        );
+        let result = parse(&source(
+            &format!("adjacent-return-expression-suffix-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 3);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn unsupported_return_expression_start_recovers_before_following_statements() {
     let text = concat!(
         "module demo.main;\n",
