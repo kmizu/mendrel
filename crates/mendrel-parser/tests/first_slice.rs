@@ -1944,6 +1944,50 @@ fn unsupported_return_expression_keeps_semicolons_inside_balanced_delimiters() {
 }
 
 #[test]
+fn unsupported_return_expression_keeps_line_separated_tokens_inside_balanced_delimiters() {
+    for (case, expression, actual) in [
+        ("paren", "while(\n        input\n    )", "while"),
+        ("angle", "input::<\n        value\n    >", "::"),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {};\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression,
+        );
+        let result = parse(&source(
+            &format!("balanced-multiline-return-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        let return_statement =
+            find_kind(result.tree.root(), SyntaxKind::ReturnStatement).expect("return statement");
+        assert!(contains_kind(return_statement, SyntaxKind::Error));
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn unsupported_return_suffix_tracks_balanced_angle_delimiters() {
     for (case, expression) in [
         ("keyword", "input::<return>"),
@@ -2038,6 +2082,176 @@ fn unterminated_return_angle_delimiters_resynchronize_before_following_block_ele
             "expression loss for {case}",
         );
         assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn unterminated_return_delimiters_without_semicolons_preserve_following_block_elements() {
+    let cases = [
+        (
+            "paren-before-let",
+            "while(input",
+            "let next = input; next",
+            "while",
+            2,
+            1,
+            1,
+            2,
+        ),
+        (
+            "angle-before-return",
+            "input::<value",
+            "return input;",
+            "::",
+            2,
+            2,
+            0,
+            2,
+        ),
+        (
+            "paren-before-tail",
+            "while(input",
+            "next",
+            "while",
+            1,
+            1,
+            0,
+            1,
+        ),
+    ];
+
+    for (
+        case,
+        expression,
+        following,
+        actual,
+        statement_count,
+        return_count,
+        let_count,
+        expression_count,
+    ) in cases
+    {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "    {}\n",
+                "}}\n",
+            ),
+            expression, following,
+        );
+        let result = parse(&source(
+            &format!("missing-return-semicolon-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code())
+                .collect::<Vec<_>>(),
+            ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+            "{case}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(result.diagnostics[1].expected(), Some(";"));
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Statement),
+            statement_count,
+            "statement loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            return_count,
+            "return loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::LetStatement),
+            let_count,
+            "let loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert!(contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn missing_return_boundaries_preserve_following_top_level_declarations() {
+    let cases = [
+        (
+            "function",
+            "pub fn intact(input: I32) -> I32 { input }",
+            SyntaxKind::FunctionDecl,
+            2,
+        ),
+        (
+            "record",
+            "record Intact { value: I32, }",
+            SyntaxKind::RecordDecl,
+            1,
+        ),
+        ("enum", "enum Intact { Value, }", SyntaxKind::EnumDecl, 1),
+    ];
+
+    for (case, declaration, declaration_kind, declaration_count) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn broken(input: I32) -> I32 {{\n",
+                "    return input::<value\n",
+                "{}\n",
+            ),
+            declaration,
+        );
+        let result = parse(&source(
+            &format!("missing-return-boundary-before-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code())
+                .collect::<Vec<_>>(),
+            [
+                "E-SYNTAX-UNSUPPORTED-0001",
+                "E-SYNTAX-MISSING-0001",
+                "E-SYNTAX-MISSING-0001",
+            ],
+            "{case}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(result.diagnostics[0].actual(), Some("::"));
+        assert_eq!(result.diagnostics[1].expected(), Some(";"));
+        assert_eq!(result.diagnostics[2].expected(), Some("}"));
+        assert_eq!(
+            count_kind(result.tree.root(), declaration_kind),
+            declaration_count,
+            "declaration loss for {case}",
+        );
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert!(contains_zero_width_token(
             result.tree.root(),
             TokenKind::Missing
         ));

@@ -445,18 +445,34 @@ impl Parser<'_> {
         let mut brace_depth = 0_u32;
         let mut consumed = false;
         while !self.at_eof() {
+            let significant_index = self.significant_index();
             let at_outer_boundary =
                 angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
             let at_statement_semicolon = self.at_text(";")
                 && (at_outer_boundary
                     || (brace_depth == 0
                         && !self.return_delimiters_close_before_block_boundary(
+                            significant_index + 1,
                             angle_depth,
                             paren_depth,
                             bracket_depth,
+                            brace_depth,
                         )));
+            let at_unclosed_delimiter_boundary = !at_outer_boundary
+                && (self.at_statement_start()
+                    || self.at_top_level_decl_start()
+                    || (self.has_line_break_before(significant_index)
+                        && self.at_expression_start()))
+                && !self.return_delimiters_close_before_block_boundary(
+                    significant_index,
+                    angle_depth,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
             if consumed
                 && (at_statement_semicolon
+                    || at_unclosed_delimiter_boundary
                     || (at_outer_boundary
                         && (self.at_statement_start() || self.at_top_level_decl_start()))
                     || (brace_depth == 0 && self.at_text("}")))
@@ -487,12 +503,13 @@ impl Parser<'_> {
 
     fn return_delimiters_close_before_block_boundary(
         &self,
+        start_index: usize,
         mut angle_depth: u32,
         mut paren_depth: u32,
         mut bracket_depth: u32,
+        mut brace_depth: u32,
     ) -> bool {
-        let mut brace_depth = 0_u32;
-        let mut index = self.next_significant_index(self.significant_index() + 1);
+        let mut index = self.next_significant_index(start_index);
         loop {
             let Some(token) = self.tokens.get(index) else {
                 return false;
@@ -514,11 +531,17 @@ impl Parser<'_> {
                 "}" => brace_depth -= 1,
                 _ => {}
             }
-            if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 {
+            if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
                 return true;
             }
             index = self.next_significant_index(index + 1);
         }
+    }
+
+    fn has_line_break_before(&self, significant_index: usize) -> bool {
+        self.tokens[self.cursor..significant_index]
+            .iter()
+            .any(|token| token.text.contains(['\n', '\r']))
     }
 
     fn parse_let_statement(&mut self) -> SyntaxNode {
