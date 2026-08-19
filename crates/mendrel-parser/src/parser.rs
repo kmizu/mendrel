@@ -2,7 +2,9 @@ use mendrel_diagnostics::{
     Diagnostic, DiagnosticFix, DiagnosticSpan, MISSING_TOKEN, TextEdit, UNSUPPORTED_SYNTAX,
 };
 use mendrel_source::{ByteSpan, SourceFile};
-use mendrel_syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxTree, Token, TokenKind};
+use mendrel_syntax::{
+    SPACED_OPERATORS, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxTree, Token, TokenKind,
+};
 
 use crate::lexer::{LexResult, lex};
 
@@ -451,7 +453,7 @@ impl Parser<'_> {
         let mut bracket_depth = 0_u32;
         let mut brace_depth = 0_u32;
         let mut consumed = false;
-        let mut previous_significant_index = None;
+        let mut previous_requires_expression_continuation: Option<bool> = None;
         while !self.at_eof() {
             let significant_index = self.significant_index();
             let at_outer_boundary =
@@ -466,11 +468,12 @@ impl Parser<'_> {
                             bracket_depth,
                             brace_depth,
                         ) == ReturnDelimiterLookahead::NoClose));
-            let line_separated_expression = previous_significant_index.is_some_and(|previous| {
-                !self.token_at_requires_expression_continuation(previous)
-                    && self.has_line_break_before(significant_index)
-                    && self.at_expression_start()
-            });
+            let line_separated_expression =
+                previous_requires_expression_continuation.is_some_and(|requires_continuation| {
+                    !requires_continuation
+                        && self.has_line_break_before(significant_index)
+                        && self.at_expression_start()
+                });
             let delimiter_layer_stays_unclosed = !at_outer_boundary
                 && self.return_delimiter_lookahead(
                     significant_index,
@@ -493,6 +496,9 @@ impl Parser<'_> {
 
             let token = self.tokens[self.cursor].clone();
             if !token.kind.is_trivia() {
+                previous_requires_expression_continuation = Some(
+                    Self::token_requires_expression_continuation(&token, angle_depth),
+                );
                 match token.text.as_str() {
                     "<" => angle_depth += 1,
                     ">" => angle_depth = angle_depth.saturating_sub(1),
@@ -506,20 +512,20 @@ impl Parser<'_> {
                     _ => {}
                 }
                 consumed = true;
-                previous_significant_index = Some(self.cursor);
             }
             self.bump(&mut children);
         }
         SyntaxNode::new(SyntaxKind::Error, children)
     }
 
-    fn token_at_requires_expression_continuation(&self, index: usize) -> bool {
-        self.tokens.get(index).is_some_and(|token| {
-            matches!(
-                token.text.as_str(),
-                "+" | "-" | "*" | "/" | "%" | "." | "::" | "," | ":" | "=" | "(" | "[" | "{" | "<"
-            )
-        })
+    fn token_requires_expression_continuation(token: &Token, angle_depth: u32) -> bool {
+        let closes_angle_delimiter = angle_depth > 0 && matches!(token.text.as_str(), ">" | ">>");
+        !closes_angle_delimiter
+            && (SPACED_OPERATORS.contains(&token.text.as_str())
+                || matches!(
+                    token.text.as_str(),
+                    "." | "::" | "," | ":" | "(" | "[" | "{"
+                ))
     }
 
     fn return_delimiter_lookahead(

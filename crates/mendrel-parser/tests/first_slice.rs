@@ -1,6 +1,8 @@
 use mendrel_parser::parse;
 use mendrel_source::SourceFile;
-use mendrel_syntax::{SyntaxElement, SyntaxKind, SyntaxNode, TokenKind, production_rule};
+use mendrel_syntax::{
+    SPACED_OPERATORS, SyntaxElement, SyntaxKind, SyntaxNode, TokenKind, production_rule,
+};
 
 fn source(path: &str, text: &str) -> SourceFile {
     SourceFile::from_bytes(path, text.as_bytes().to_vec()).expect("valid UTF-8 fixture")
@@ -1991,6 +1993,108 @@ fn unterminated_return_delimiters_keep_line_separated_operands_before_their_semi
         );
         assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
         assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn unsupported_grammar_operators_continue_returns_across_line_breaks() {
+    for operator in SPACED_OPERATORS
+        .iter()
+        .copied()
+        .filter(|operator| !matches!(*operator, "+" | "-" | "*" | "/" | "%"))
+    {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return input {}\n",
+                "        value;\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            operator,
+        );
+        let result = parse(&source(
+            &format!("multiline-unsupported-return-operator-{operator}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(
+            result.tree.source_text(),
+            text,
+            "source loss for {operator}",
+        );
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{operator}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(operator));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 3);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
+fn balanced_return_angle_closers_do_not_hide_a_missing_semicolon_tail() {
+    for (case, expression) in [
+        ("single", "input::<value>"),
+        ("nested", "input::<Outer<value>>"),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression,
+        );
+        let result = parse(&source(
+            &format!("missing-return-semicolon-after-angle-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.code())
+                .collect::<Vec<_>>(),
+            ["E-SYNTAX-UNSUPPORTED-0001", "E-SYNTAX-MISSING-0001"],
+            "{case}: {:#?}",
+            result.diagnostics,
+        );
+        assert_eq!(result.diagnostics[0].actual(), Some("::"));
+        assert_eq!(result.diagnostics[1].expected(), Some(";"));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 1);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(contains_zero_width_token(
             result.tree.root(),
             TokenKind::Missing
         ));
