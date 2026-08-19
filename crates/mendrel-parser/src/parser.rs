@@ -4,6 +4,7 @@ use mendrel_diagnostics::{
 use mendrel_source::{ByteSpan, SourceFile};
 use mendrel_syntax::{
     SPACED_OPERATORS, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxTree, Token, TokenKind,
+    production_rule,
 };
 
 use crate::lexer::{LexResult, lex};
@@ -520,12 +521,21 @@ impl Parser<'_> {
 
     fn token_requires_expression_continuation(token: &Token, angle_depth: u32) -> bool {
         let closes_angle_delimiter = angle_depth > 0 && matches!(token.text.as_str(), ">" | ">>");
+        let is_unary_operator = production_rule("unary_expression")
+            .is_some_and(|rule| Self::production_contains_literal(rule, &token.text));
         !closes_angle_delimiter
             && (SPACED_OPERATORS.contains(&token.text.as_str())
+                || is_unary_operator
                 || matches!(
                     token.text.as_str(),
                     "." | "::" | "," | ":" | "(" | "[" | "{"
                 ))
+    }
+
+    fn production_contains_literal(rule: &str, literal: &str) -> bool {
+        rule.split('"')
+            .enumerate()
+            .any(|(index, part)| index % 2 == 1 && part == literal)
     }
 
     fn return_delimiter_lookahead(

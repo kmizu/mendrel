@@ -2054,6 +2054,54 @@ fn unsupported_grammar_operators_continue_returns_across_line_breaks() {
 }
 
 #[test]
+fn grammar_defined_unary_operators_continue_returns_across_line_breaks() {
+    for (case, expression_start, actual) in [
+        ("outer", "!", "!"),
+        ("unterminated-paren", "while(!", "while"),
+    ] {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "        value;\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression_start,
+        );
+        let result = parse(&source(
+            &format!("multiline-unary-return-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Expression), 2);
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn balanced_return_angle_closers_do_not_hide_a_missing_semicolon_tail() {
     for (case, expression) in [
         ("single", "input::<value>"),
