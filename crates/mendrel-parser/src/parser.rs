@@ -458,17 +458,29 @@ impl Parser<'_> {
                             bracket_depth,
                             brace_depth,
                         )));
-            let at_recovery_boundary = (self.at_statement_start()
-                || self.at_top_level_decl_start()
-                || (self.has_line_break_before(significant_index) && self.at_expression_start()))
-                && (at_outer_boundary
-                    || !self.return_delimiters_close_before_block_boundary(
-                        significant_index,
-                        angle_depth,
-                        paren_depth,
-                        bracket_depth,
-                        brace_depth,
-                    ));
+            let line_separated_expression =
+                self.has_line_break_before(significant_index) && self.at_expression_start();
+            let delimiters_stay_unclosed = !at_outer_boundary
+                && !self.return_delimiters_close_before_block_boundary(
+                    significant_index,
+                    angle_depth,
+                    paren_depth,
+                    bracket_depth,
+                    brace_depth,
+                );
+            let at_recovery_boundary = ((self.at_statement_start()
+                || self.at_top_level_decl_start())
+                && (at_outer_boundary || delimiters_stay_unclosed))
+                || (line_separated_expression
+                    && (at_outer_boundary
+                        || (delimiters_stay_unclosed
+                            && !self.return_statement_semicolon_precedes_nested_boundary(
+                                significant_index,
+                                angle_depth,
+                                paren_depth,
+                                bracket_depth,
+                                brace_depth,
+                            ))));
             if consumed
                 && (at_statement_semicolon
                     || at_recovery_boundary
@@ -496,6 +508,117 @@ impl Parser<'_> {
             self.bump(&mut children);
         }
         SyntaxNode::new(SyntaxKind::Error, children)
+    }
+
+    fn return_statement_semicolon_precedes_nested_boundary(
+        &self,
+        start_index: usize,
+        mut angle_depth: u32,
+        mut paren_depth: u32,
+        mut bracket_depth: u32,
+        mut brace_depth: u32,
+    ) -> bool {
+        let mut index = self.next_significant_index(start_index);
+        let mut previous_index = None;
+        loop {
+            let Some(token) = self.tokens.get(index) else {
+                return false;
+            };
+            if token.kind == TokenKind::Eof {
+                return false;
+            }
+
+            let at_outer_boundary =
+                angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+            if let Some(previous) = previous_index {
+                let line_separated_expression = self.tokens[previous + 1..index]
+                    .iter()
+                    .any(|trivia| trivia.text.contains(['\n', '\r']))
+                    && self.token_at_starts_expression(index);
+                let competing_boundary = self.token_at_starts_statement(index)
+                    || self.token_at_starts_top_level_decl(index)
+                    || line_separated_expression;
+                if competing_boundary
+                    && (at_outer_boundary
+                        || !self.return_delimiters_close_before_block_boundary(
+                            index,
+                            angle_depth,
+                            paren_depth,
+                            bracket_depth,
+                            brace_depth,
+                        ))
+                {
+                    return false;
+                }
+            }
+
+            if token.text == ";"
+                && (at_outer_boundary
+                    || (brace_depth == 0
+                        && !self.return_delimiters_close_before_block_boundary(
+                            index + 1,
+                            angle_depth,
+                            paren_depth,
+                            bracket_depth,
+                            brace_depth,
+                        )))
+            {
+                return true;
+            }
+            if brace_depth == 0 && token.text == "}" {
+                return false;
+            }
+
+            match token.text.as_str() {
+                "<" => angle_depth += 1,
+                ">" => angle_depth = angle_depth.saturating_sub(1),
+                ">>" => angle_depth = angle_depth.saturating_sub(2),
+                "(" => paren_depth += 1,
+                ")" => paren_depth = paren_depth.saturating_sub(1),
+                "[" => bracket_depth += 1,
+                "]" => bracket_depth = bracket_depth.saturating_sub(1),
+                "{" => brace_depth += 1,
+                "}" => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            previous_index = Some(index);
+            index = self.next_significant_index(index + 1);
+        }
+    }
+
+    fn token_at_starts_statement(&self, index: usize) -> bool {
+        self.tokens
+            .get(index)
+            .is_some_and(|token| matches!(token.text.as_str(), "let" | "return"))
+    }
+
+    fn token_at_starts_top_level_decl(&self, index: usize) -> bool {
+        let Some(token) = self.tokens.get(index) else {
+            return false;
+        };
+        if matches!(token.text.as_str(), "record" | "enum") {
+            return true;
+        }
+        if !matches!(token.text.as_str(), "pub" | "internal") {
+            return false;
+        }
+        let next = self.next_significant_index(index + 1);
+        self.tokens.get(next).is_some_and(|next_token| {
+            matches!(next_token.text.as_str(), "record" | "enum")
+                || (token.text == "pub" && next_token.text == "fn")
+        })
+    }
+
+    fn token_at_starts_expression(&self, index: usize) -> bool {
+        self.tokens.get(index).is_some_and(|token| {
+            matches!(
+                token.kind,
+                TokenKind::Integer | TokenKind::String | TokenKind::Identifier
+            ) || matches!(
+                token.text.as_str(),
+                "true" | "false" | "Unit" | "None" | "("
+            )
+        })
     }
 
     fn return_delimiters_close_before_block_boundary(

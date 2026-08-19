@@ -1916,6 +1916,61 @@ fn unterminated_return_delimiters_resynchronize_before_following_block_elements(
 }
 
 #[test]
+fn unterminated_return_delimiters_keep_line_separated_operands_before_their_semicolons() {
+    let cases = [
+        ("paren", "while(", "while", 2),
+        ("angle", "input::<", "::", 3),
+        ("bracket", "while[", "while", 2),
+    ];
+
+    for (case, expression_start, actual, expression_count) in cases {
+        let text = format!(
+            concat!(
+                "module demo.main;\n",
+                "pub fn value(input: I32) -> I32 {{\n",
+                "    return {}\n",
+                "        input;\n",
+                "    let next = input;\n",
+                "    next\n",
+                "}}\n",
+            ),
+            expression_start,
+        );
+        let result = parse(&source(
+            &format!("unterminated-return-before-operand-{case}.mnd"),
+            &text,
+        ));
+
+        assert_eq!(result.tree.source_text(), text, "source loss for {case}");
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "{case}: {:#?}",
+            result.diagnostics
+        );
+        assert_eq!(result.diagnostics[0].code(), "E-SYNTAX-UNSUPPORTED-0001");
+        assert_eq!(result.diagnostics[0].actual(), Some(actual));
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Statement), 2);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::ReturnStatement),
+            1
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::LetStatement), 1);
+        assert_eq!(
+            count_kind(result.tree.root(), SyntaxKind::Expression),
+            expression_count,
+            "expression loss for {case}",
+        );
+        assert_eq!(count_kind(result.tree.root(), SyntaxKind::Error), 1);
+        assert!(!contains_zero_width_token(
+            result.tree.root(),
+            TokenKind::Missing
+        ));
+        assert!(result.tree.has_recovery());
+    }
+}
+
+#[test]
 fn unsupported_return_expression_keeps_semicolons_inside_balanced_delimiters() {
     let text = concat!(
         "module demo.main;\n",
