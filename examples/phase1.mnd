@@ -1,0 +1,27 @@
+module shop.pricing;
+
+import shop.catalog.Item;
+import shop.money.{Money, TaxRate as Rate};
+
+pub record Quote {
+    pub subtotal: Money,
+    internal tax: Money,
+    total: Money,
+}
+
+pub enum QuoteStatus {
+    Ready,
+    Deferred {
+        message: Text,
+    },
+}
+
+pub fn calculate_total(subtotal: I32, rate: I32) -> I32 {
+    let tax = subtotal * rate;
+    let total: I32 = subtotal + tax;
+    return total;
+}
+
+pub fn choose_total(current: I32, fallback: I32) -> I32 {
+    choose(current, fallback: fallback)
+}

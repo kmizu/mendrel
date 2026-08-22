@@ -3,7 +3,7 @@
 > Generated from the exact bytes in this directory. `MANIFEST.md` itself is omitted to avoid a self-referential digest.
 
 - Pack revision: design draft 0.2
-- File count (excluding this manifest): 27
+- File count (excluding this manifest): 28
 - Digest: SHA-256
 
 | Path | Bytes | SHA-256 | Role |
@@ -31,6 +31,7 @@
 | `examples/checkout_service.mnd` | 3,290 | `d4c5615d8b63f6c55876349bbe1416641ebc4b369324a824b36eacfc1673cebb` | production-oriented Mendrel example |
 | `examples/diagnostic.jsonl` | 1,836 | `d2766ee036d4938c7002c0ce6e6ef2fc0aca033bb0b68306af7bcc3cac0870e0` | schema-valid diagnostic example |
 | `examples/map-request.json` | 416 | `e3d8dc18262ef1c90f21fa32e4f6f0c0b19c6a1d8a564834f3841ce69c37eb05` | schema-valid MAP request example |
+| `examples/phase1.mnd` | 512 | `fec1a3f10df35f7f680fb8e6687939235debfd5c02780de6ba762b5d47e07580` | canonical example for the implemented Phase 1 syntax subset |
 | `schemas/diagnostic-v1.schema.json` | 9,131 | `816160a39a6e0f7dafde419d8cbe827bd44384f54d3d95bb243dba702e8cf46e` | diagnostic JSON Schema |
 | `schemas/map-v1.schema.json` | 4,751 | `51e7dbb5295abbe38fa3663f4ca850fc598b8695d8df7864d2b9a6d18cafae9d` | MAP envelope JSON Schema |
 | `scripts/validate_pack.py` | 8,023 | `5f439da4cb897a9d3e703657344c6f80e1e8f2b5d688e5b6725e69f2bdc40e4f` | pack manifest・EBNF・schema・example validator |
